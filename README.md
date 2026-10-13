@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/graft-hero.png" alt="Graft — open-source context layer for large codebases" width="100%"/>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/trail-code-banner-dark.png">
+  <img src="assets/trail-code-banner.png" alt="Trail-code (previously graft), by Trail. A map of a codebase, with one team decision pinned to it: keep retries at 4." width="100%"/>
+</picture>
 
 ### Turbocharge Claude Code, Cursor, Codex, Gemini & every coding agent: faster, cheaper, with contextual understanding specific to your codebase.
 
