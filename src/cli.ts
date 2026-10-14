@@ -48,7 +48,8 @@ import { planRetract, runRetract, changed, type Retraction } from "./hosts/retra
 import { compactWrites, formatNonInteractiveHelp, formatPlan, runPicker } from "./cli-picker.js";
 import { buildGraphWithProgress } from "./claude/build-progress.js";
 import { homedir } from "node:os";
-import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, runUpgrade } from "./cli-meta.js";
+import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, readPackageName, runUpgrade } from "./cli-meta.js";
+import { nativeFallbackNotice } from "./graph/native.js";
 import { patchBuildConfig, type BuildConfig } from "./util/state.js";
 import { normalizePathPrefix } from "./util/paths.js";
 import { latestSession, formatSessionStats, sessionInputRate } from "./claude/session-metrics.js";
@@ -595,6 +596,7 @@ grouped(program.command("build"), GROUP.setup)
         includeDirs: opts.includeDir,
         followSubmodules: followSubmodulesWasExplicit ? opts.followSubmodules : undefined,
         followNestedRepos: followNestedReposWasExplicit ? opts.followNestedRepos : undefined,
+        packageName: readPackageName(import.meta.url),
       });
       return;
     }
@@ -663,6 +665,10 @@ grouped(program.command("build"), GROUP.setup)
       { repo: buildRoot },
     );
     for (const e of g.errors) console.error(`✗ ${e}`);
+    // A language whose native grammar didn't load was parsed by its WASM stand-in:
+    // say which, and the install that fixes it. Nothing when everything loaded.
+    const fallbackNotice = nativeFallbackNotice(g.nativeFallback, readPackageName(import.meta.url));
+    if (fallbackNotice) console.error(fallbackNotice);
 
     const rel = relative(process.cwd(), g.contextDir) || "graft";
     if (process.env.GRAFT_NO_GITIGNORE) {
