@@ -46,15 +46,10 @@ export function tag(env: NodeJS.ProcessEnv = process.env): string {
 
 /**
  * The commands whose trail spelling is not just `graft` → `trail`, longest
- * prefix first. `graft check` gave its name to the team check, `graft stats`
- * and `graft trail status` became one `trail status`, and the `graft trail …`
- * group moved to the top level.
+ * prefix first. `graft check` gave its name to the team check, and `graft
+ * stats` became `trail status`.
  */
 const RENAMED: ReadonlyArray<readonly [string, string]> = [
-  ["graft trail disconnect", "trail logout"],
-  ["graft trail connect", "trail login"],
-  ["graft trail status", "trail status"],
-  ["graft trail", "trail"],
   ["graft check", "trail build --check"],
   ["graft stats", "trail status"],
   ["graft", "trail"],
@@ -63,8 +58,7 @@ const RENAMED: ReadonlyArray<readonly [string, string]> = [
 /**
  * A command as the running name spells it. Takes the graft spelling, so call
  * sites read the way they always have and graft's output does not change:
- * `cmd("graft trail push")` is `graft trail push` under graft and `trail push`
- * under trail.
+ * `cmd("graft ask")` is `graft ask` under graft and `trail ask` under trail.
  */
 export function cmd(graftSpelling: string, b: Brand = brand()): string {
   if (b === "graft") return graftSpelling;
@@ -151,7 +145,7 @@ export function commandOnPath(name: string, env: NodeJS.ProcessEnv = process.env
 }
 
 export interface NoticeInput {
-  /** The graft spelling of what just ran, e.g. `graft ask` or `graft trail status`. */
+  /** The graft spelling of what just ran, e.g. `graft ask` or `graft build`. */
   ran: string;
   /** stderr is a terminal: a person is watching. */
   tty: boolean;

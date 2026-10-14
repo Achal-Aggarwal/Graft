@@ -24,49 +24,9 @@ import { statuslineWanted } from "./claude/settings-merge.js";
 import { runHostsInit } from "./hosts/init.js";
 import { hostIds } from "./hosts/registry.js";
 import { checkoutRoot, ensureRepoHome, keepsNotes, noteCount, rememberRepo, repoName, repoPlace, shownPath } from "./notes/home.js";
-import { parseBrainArg, connectBrain, pullBrain, brainStatus } from "./brain/connect.js";
-import { rulesForPointers } from "./brain/attach.js";
-import { clearLink, type BrainLink } from "./brain/link.js";
-import {
-  buildEarlyDigest,
-  buildLocalDigest,
-  fetchExpectedRepo,
-  pickedAgents,
-  pushContext,
-  pushDigest,
-  pushEarlyDigest,
-  repoSlugFromGit,
-  sameRepo,
-  uploadCaps,
-} from "./brain/push.js";
-import { apiBaseUrl, clearPendingSignup, readLink, readPendingSignup, writeLink, writePendingSignup } from "./brain/link.js";
-import { withLegacyNames } from "./legacy-args.js";
 import { brand, cmd, graftNotice, tag } from "./brand.js";
 import { branchDiff } from "./cloud/diff.js";
-import { currentStage, DOING_LABEL, rulesSoFar, watchBuild, type RepoState } from "./brain/watch.js";
-import {
-  AGENT_WAIT_MS,
-  brainUrl,
-  newSignupState,
-  openBrowser,
-  PENDING_SIGNUP_TTL_MS,
-  reviewUrl,
-  signupUrl,
-  startHandoff,
-  waitForSignup,
-} from "./brain/signup.js";
-import { runTrailPull, suggestionsLine } from "./brain/pull.js";
-import {
-  trackWatchExit,
-  WATCH_DEFAULTS,
-  watchExitCode,
-  watchExitJson,
-  watchExitLines,
-  watchTrail,
-  type WatchTrailResult,
-} from "./brain/watch-trail.js";
-import { AUTOPUSH_CHILD_ENV, recordTrailPush } from "./brain/autopush.js";
-import { startSpinner } from "./util/spinner.js";
+import { openBrowser } from "./util/browser.js";
 import { contextDirFor } from "./context/node-file.js";
 import { loadGraphCached } from "./graph/load.js";
 import { ensureFreshChildren, ensureFreshGraph, refreshNote } from "./graph/refresh.js";
@@ -300,7 +260,7 @@ function parseTabs(raw: string | undefined): VizTab[] | undefined {
  * not editorialize on stderr at startup (`mcp` runs its own upkeep at boot, and
  * `_update-check` IS the fetch).
  */
-const UPKEEP_SKIP = new Set(["version", "upgrade", "_update-check", "_brain-refresh", "_trail-past-read", "mcp"]);
+const UPKEEP_SKIP = new Set(["version", "upgrade", "_update-check", "_trail-past-read", "mcp"]);
 
 /**
  * Every other command: top up the cached registry answer in the background and,
@@ -338,28 +298,12 @@ program.hook("postAction", (_parent, action) => {
   track("query", { command: name, surface: "cli", hit: queryNote.hit, notes: queryNote.notes }, { repo: queryNote.repo });
 });
 
-/** `graft ask`, `graft trail status`: a command as graft spells it, whatever ran it. */
+/** `graft ask`, `graft build`: a command as graft spells it, whatever ran it. */
 function spelling(action: Command): string {
   const words: string[] = [];
   for (let c: Command | null = action; c && c.parent; c = c.parent) words.unshift(c.name());
   return ["graft", ...words].join(" ");
 }
-
-// Hidden from --help: only ever spawned detached by maybeRefreshInBackground.
-program
-  .command("_brain-refresh", { hidden: true })
-  .description("internal: re-pull the attached brain's rules and rewrite the agent files")
-  .argument("[dir]", "target repo directory", ".")
-  .action(async (dir: string) => {
-    // Spawned detached by upkeep, so nothing here is user-visible and nothing
-    // may throw: a failure means the cached rules keep serving, which is the
-    // correct outcome for a brain that is momentarily unreachable.
-    try {
-      await pullBrain(resolve(dir), { home: homedir() });
-    } catch {
-      /* the next session tries again */
-    }
-  });
 
 // Hidden: spawned detached by maybeSyncInBackground when a workspace repo's
 // learnings changed, or uses are waiting to go. Running it by hand syncs now.
@@ -1341,7 +1285,6 @@ grouped(program.command("init"), GROUP.setup)
   .option("--dry-run", "print every file init would touch, then exit without writing")
   .option("-y, --yes", "skip the picker and wire every detected agent (the pre-0.8 default)")
   .option("--no-global", "skip writes outside this repo (the ~/.codex/ config + hooks)")
-  .option("--trail <handoff>", "attach a Trail: <brainId>:<token> (or a bare id with GRAFT_BRAIN_TOKEN set)")
   .option("--verbose", "print every file written, the graph build's own output and the closing banner")
   .action(async (dir: string, opts: InitOptions) => {
     await runInitCommand(dir, opts);
@@ -1465,45 +1408,18 @@ function printLines(lines: string[]): void {
 }
 
 /** `graft init`'s flags, as commander hands them over. */
-interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; trail?: string; verbose?: boolean }
-
-/** `a, b and c`. */
-function joinAnd(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
+interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean }
 
 /** Repo-relative with forward slashes, for printing. */
 function shown(repo: string, path: string): string {
   return relative(repo, path).split("\\").join("/");
 }
 
-/**
- * `graft init`. Also run by `graft trail push` on a repo graft has not been set
- * up in — the Trail pages start people at push, and a trail whose rules no
- * coding agent reads is only half set up. `epilogue: false` leaves out the
- * closing banner when push is going to keep talking.
- */
-async function runInitCommand(
-  dir: string,
-  opts: InitOptions,
-  how: { epilogue?: boolean; push?: boolean } = {},
-): Promise<{ ids: string[] } | null> {
+/** `graft init`. */
+async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: string[] } | null> {
     if (opts.listAgents) {
       for (const id of [...hostIds(), "claude"]) console.log(id);
       return null;
-    }
-    // Parsed before anything is written: a mistyped handoff should cost the user
-    // an error, not a half-wired repo they have to `graft uninstall` out of.
-    let brainLink: BrainLink | undefined;
-    if (opts.trail) {
-      const parsed = parseBrainArg(opts.trail);
-      if ("error" in parsed) {
-        console.error(`✗ --trail: ${parsed.error}`);
-        process.exitCode = 1;
-        return null;
-      }
-      brainLink = parsed;
     }
     const repo = resolve(dir);
     const explicit = Array.isArray(opts.agents) ? opts.agents : undefined;
@@ -1540,8 +1456,6 @@ async function runInitCommand(
       const reason = offReason();
       const picked = await runPicker(plan, repo, home, {
         offerTelemetry: reason === null || reason === "disabled",
-        // From push, the line above the picker already asks the question.
-        ...(how.push ? { title: null } : {}),
       });
       if (picked === null) {
         console.error("· cancelled — nothing written");
@@ -1616,21 +1530,18 @@ async function runInitCommand(
     // The graph, built once after the wiring: a workspace parent's build is
     // the workspace build, so it covers every child.
     let graphLine: string | null = null;
-    let graphNodes = 0;
     if (!verbose) {
       const res = await buildGraphWithProgress(repo, { build: opts.build, cliPath });
       for (const m of res.messages) console.error(m);
       const existing = res.built ? null : loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
       const fmt = (x: number) => x.toLocaleString("en-US");
       if (res.graph) {
-        graphNodes = res.graph.nodes;
         graphLine = `✓ graph built · ${fmt(res.graph.nodes)} nodes, ${fmt(res.graph.edges)} edges${res.graph.files ? ` from ${fmt(res.graph.files)} file${res.graph.files === 1 ? "" : "s"}` : ""}`;
       } else if (res.built) {
         graphLine = "✓ graph built";
       } else if (res.failed) {
         graphLine = `⚠ the graph build failed — run ${cmd("graft build")} to see why`;
       } else if (existing) {
-        graphNodes = existing.meta.nodeCount;
         graphLine = `✓ graph ready · ${fmt(existing.meta.nodeCount)} nodes, ${fmt(existing.meta.edgeCount)} edges`;
       } else if (hasGraftIndex(repo)) {
         graphLine = "✓ graph ready";
@@ -1646,17 +1557,11 @@ async function runInitCommand(
       for (const w of reports.flatMap((r) => r.warnings)) console.error(w);
       const writesFor = (id: string) =>
         (plan.find((p) => p.id === id)?.writes ?? []).filter((w) => opts.global !== false || w.scope !== "global");
-      if (how.push) {
-        const built = graphLine?.startsWith("✓ graph built") ? `graph built, ${graphNodes.toLocaleString("en-US")} nodes` : graphLine?.startsWith("✓") ? "graph ready" : null;
-        console.error(`✓ wired ${joinAnd(ids)}${built ? ` · ${built}` : ""}`);
-        if (graphLine && !graphLine.startsWith("✓")) console.error(graphLine);
-      } else {
-        if (graphLine) console.error(graphLine);
-        const width = Math.max(...ids.map((id) => id.length));
-        for (const id of ids) {
-          const summary = compactWrites(writesFor(id), repo, home);
-          console.error(`✓ ${id.padEnd(width)}   ${summary}`.trimEnd());
-        }
+      if (graphLine) console.error(graphLine);
+      const width = Math.max(...ids.map((id) => id.length));
+      for (const id of ids) {
+        const summary = compactWrites(writesFor(id), repo, home);
+        console.error(`✓ ${id.padEnd(width)}   ${summary}`.trimEnd());
       }
     }
 
@@ -1686,29 +1591,7 @@ async function runInitCommand(
       }
     }
 
-    // The brain comes last, after the graph exists: its rules are anchored to
-    // symbols, and `graft trail status` can only report how many of them resolve
-    // once there is a graph to resolve them against.
-    if (brainLink) {
-      const res = await connectBrain(repo, brainLink, { home, ids });
-      if (verbose) {
-        if (res.warning) console.error(`⚠ brain: ${res.warning}`);
-        else console.error(`✓ brain: pulled ${res.ruleCount} rule(s) from ${brainLink.brainId}`);
-        for (const w of res.writes) console.error(`✓ brain rules: ${w.path} (${w.action})`);
-        if (res.ruleCount > 0 && res.writes.length === 0)
-          console.error(`· no instruction file to write rules into — ${cmd("graft ask")} still carries them`);
-      } else if (res.warning) {
-        console.error(`⚠ trail: ${res.warning}`);
-      } else if (res.ruleCount === 0) {
-        console.error(`✓ trail connected · no rules yet — ${cmd("graft trail push")} reads this repo into it`);
-      } else {
-        const where = res.writes.map((w) => shown(repo, w.path)).join(", ");
-        const n = `${res.ruleCount.toLocaleString("en-US")} rule${res.ruleCount === 1 ? "" : "s"}`;
-        console.error(`✓ trail connected · ${n}${where ? ` in ${where}` : ""}`);
-      }
-    }
-
-    if (!verbose && how.epilogue !== false) {
+    if (!verbose) {
       // What there is to commit: the top-level entries the picked agents wrote.
       const tops: string[] = [];
       for (const w of selectedWrites(plan, ids)) {
@@ -1738,7 +1621,7 @@ async function runInitCommand(
     const graphs = (children.length ? children.map((c) => join(repo, c)) : [repo])
       .map((d) => loadGraphCached(contextDirFor(d, children.length ? undefined : globalDir)))
       .filter((g): g is NonNullable<typeof g> => g !== null);
-    if (verbose && how.epilogue !== false) console.error(
+    if (verbose) console.error(
       "\n" +
         formatInitEpilogue({
           graphBuilt: graphs.length > 0,
@@ -1926,544 +1809,6 @@ grouped(program.command("uninstall"), GROUP.setup)
     );
   });
 
-
-/**
- * Get this repo a trail from the terminal, by sending the user through signup
- * in their browser and catching the handoff on loopback.
- *
- * Returns the link, already saved, or null when the user should be left alone —
- * every failure prints its own reason first, because the caller only needs to
- * know whether to carry on. Nothing about the repository has been read or sent
- * by then, and every message says so.
- */
-async function signUpForBrain(repo: string, slug: string): Promise<BrainLink | null> {
-  // No terminal means an agent is running this, and a loopback listener cannot
-  // outlive the command it is waiting in: see signUpWithoutTerminal.
-  if (!process.stderr.isTTY) return signUpWithoutTerminal(repo, slug);
-  const handoff = await startHandoff();
-  const url = signupUrl({ repo: slug, port: handoff.port, state: handoff.state });
-  const startedAt = Date.now();
-
-  // Queued before the link is printed rather than after the outcome, because
-  // the outcome is the one thing a terminal handoff can lose: a user who reads
-  // the URL and walks away kills the process, and only an event already on disk
-  // survives that. This is the denominator; `brain_signup_settled` is not.
-  track("brain_signup_opened", { mode: "terminal" }, { repo });
-
-  // Printed before the browser opens, and printed whether or not it opens: on a
-  // remote shell nothing can open, and on a desktop the window sometimes lands
-  // behind the terminal. The URL is the thing that always works.
-  console.error(`· ${slug} has no trail yet — opening your browser to make one:`);
-  console.error(`  ${url}`);
-
-  openBrowser(url);
-  const spinner = startSpinner("waiting for you to finish signing up · Ctrl-C to stop");
-
-  // Ctrl-C while waiting is a person changing their mind, not a crash: say that
-  // nothing was sent, and leave with the usual interrupted exit code.
-  let onSigint: (() => void) | undefined;
-  const stopped = new Promise<"stopped">((resolve) => {
-    onSigint = () => resolve("stopped");
-    process.once("SIGINT", onSigint);
-  });
-  const got = await Promise.race([handoff.wait(), stopped]);
-  if (onSigint) process.off("SIGINT", onSigint);
-  spinner.stop();
-  if (got === "stopped") {
-    handoff.close();
-    console.error(`· stopped — nothing was sent; run ${cmd("graft trail push")} again when you're ready`);
-    track("brain_signup_settled", { outcome: "stopped", mode: "terminal", duration_bucket: durationBucket(Date.now() - startedAt) }, { repo });
-    process.exitCode = 130;
-    return null;
-  }
-  if ("error" in got) {
-    console.error(`✗ ${got.error}`);
-    // The category, never the sentence: `got.error` names the repo and the link.
-    track("brain_signup_settled", { outcome: got.reason, mode: "terminal", duration_bucket: durationBucket(Date.now() - startedAt) }, { repo });
-    return null;
-  }
-  writeLink(repo, got.link);
-  console.error(`✓ trail connected · ${slug} — your browser shows it building`);
-  track("brain_signup_settled", { outcome: "linked", mode: "terminal", duration_bucket: durationBucket(Date.now() - startedAt) }, { repo });
-  return got.link;
-}
-
-/**
- * The same sign-up when an agent runs the push, in two runs of one command.
- *
- * An agent shows the person nothing until a command exits, so the first run
- * opens the sign-up page, saves the state in its link and exits at once, with
- * a line telling the agent what to do next. The run after that finds the saved
- * state and asks Trail for the trail it made, for up to AGENT_WAIT_MS, then
- * carries on with the push. Still not signed up by then, it says so and the
- * agent runs it again. Nothing about the repository is read or sent until the
- * trail is linked.
- */
-async function signUpWithoutTerminal(repo: string, slug: string): Promise<BrainLink | null> {
-  const startedAt = Date.now();
-  const settled = (outcome: string) =>
-    track("brain_signup_settled", { outcome, mode: "agent", duration_bucket: durationBucket(Date.now() - startedAt) }, { repo });
-  const pending = readPendingSignup(repo, slug, PENDING_SIGNUP_TTL_MS);
-
-  if (!pending) {
-    const state = newSignupState();
-    writePendingSignup(repo, { state, repo: slug, createdAt: Date.now() });
-    const url = signupUrl({ repo: slug, state });
-    track("brain_signup_opened", { mode: "agent" }, { repo });
-    openBrowser(url);
-    console.error(`· ${slug} has no trail yet — opened Trail's sign-up page in the browser:`);
-    console.error(`  ${url}`);
-    console.error("· nothing has been read or sent yet.");
-    console.error(
-      `· next: ask the user to sign up in the tab that just opened (or at the link above), then run \`${cmd("graft trail push")}\` again straight away — it waits for the sign-up to finish and carries on with the push. Don't wait for them to reply first.`,
-    );
-    settled("agent_link_opened");
-    process.exitCode = 1;
-    return null;
-  }
-
-  const url = signupUrl({ repo: slug, state: pending.state });
-  console.error(`· waiting up to ${Math.round(AGENT_WAIT_MS / 1000)} s for the sign-up for ${slug} to finish:`);
-  console.error(`  ${url}`);
-  const got = await waitForSignup(pending.state, apiBaseUrl());
-
-  if ("link" in got) {
-    clearPendingSignup(repo);
-    writeLink(repo, got.link);
-    console.error(`✓ trail connected · ${slug}`);
-    settled("linked");
-    return got.link;
-  }
-  if ("pending" in got) {
-    console.error("· not signed up yet — nothing has been read or sent.");
-    console.error(`· next: run \`${cmd("graft trail push")}\` again to keep waiting. The link above stays valid for about 15 minutes.`);
-    settled("still_waiting");
-    process.exitCode = 1;
-    return null;
-  }
-  clearPendingSignup(repo);
-  console.error(`✗ ${got.error}`);
-  settled(got.reason);
-  process.exitCode = 1;
-  return null;
-}
-
-function connectCommand(name = "connect"): Command {
-  return new Command(name)
-  .description("Attach a brain to this repo and pull its rules")
-  .argument("<handoff>", "<brainId>:<token>, or a bare brain id with GRAFT_BRAIN_TOKEN set")
-  .argument("[dir]", "target repo directory", ".")
-  .action(async (handoff: string, dir: string) => {
-    await runConnect(handoff, dir);
-  });
-}
-
-/** `graft trail connect`, and `trail login <handoff>`: attach a trail from a Trail page's handoff. */
-async function runConnect(handoff: string, dir: string): Promise<void> {
-    const parsed = parseBrainArg(handoff);
-    if ("error" in parsed) {
-      console.error(`✗ ${parsed.error}`);
-      process.exitCode = 1;
-      return;
-    }
-    const repo = resolve(dir);
-    const res = await connectBrain(repo, parsed, { home: homedir() });
-    if (res.warning) {
-      console.error(`⚠ ${res.warning}`);
-      return;
-    }
-    if (res.ruleCount === 0) {
-      // The normal case on the local route: the brain exists but nothing has
-      // read the repo yet. Saying "0 rules" without saying why reads as a
-      // failure, and the next step is the whole point.
-      console.error("✓ attached this repo to the brain — it has no rules yet");
-      console.error(`· run \`${cmd("graft trail push")}\` to read this repository into it`);
-      return;
-    }
-    console.error(`✓ pulled ${res.ruleCount} rule(s) from ${parsed.brainId}`);
-    for (const w of res.writes) console.error(`✓ ${w.path} (${w.action})`);
-}
-
-function pullCommand(name = "pull"): Command {
-  return new Command(name)
-  .description("Refresh the trail's rules and write every change you accepted in Trail into this repo's context files")
-  .argument("[dir]", "target repo directory", ".")
-  .option("--dry-run", "show what would change without writing anything or telling Trail")
-  .action(async (dir: string, opts: { dryRun?: boolean }) => {
-    await runTrailPullCommand(dir, opts);
-  });
-}
-
-/** `graft trail pull`, and `graft claude-md pull` which is now the same thing. */
-async function runTrailPullCommand(dir: string, opts: { dryRun?: boolean }): Promise<void> {
-  const repo = resolve(dir);
-  const link = readLink(repo);
-  if (!link) {
-    console.error(`✗ this repo has no trail yet — run ${cmd("graft trail push")} first`);
-    process.exitCode = 1;
-    return;
-  }
-  const stamp = readStamp(repo);
-  const wired = [...new Set([...(stamp?.hosts ?? []), ...wiredHostIds(repo)])];
-  const code = await runTrailPull(repo, link, { home: homedir(), wired, dryRun: opts.dryRun });
-  if (code !== 0) process.exitCode = code;
-}
-
-/** A positive number of seconds or minutes from an option, or null. */
-function positiveNumber(raw: string): number | null {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function watchCommand(name = "watch"): Command {
-  return new Command(name)
-  .description("Wait until Trail has suggestions to review or accepted changes to pull, then say so once")
-  .argument("[dir]", "target repo directory", ".")
-  .option("--interval <seconds>", "how often to check Trail", String(WATCH_DEFAULTS.intervalMs / 1000))
-  .option("--settle <seconds>", "how long the accepted changes must stay the same before they are reported", String(WATCH_DEFAULTS.settleMs / 1000))
-  .option("--timeout <minutes>", "give up after this long (exit code 2)", String(WATCH_DEFAULTS.timeoutMs / 60_000))
-  .option("--accepted-only", "keep waiting while suggestions are only waiting for review; stop on accepted changes")
-  .option("--json", "print the result as JSON")
-  .option("--verbose", "print the counts on every check, to stderr")
-  .addHelpText(
-    "after",
-    [
-      "",
-      "Stops when any of these is true, and prints one block to stdout:",
-      "  - there are suggestions and none accepted (unless --accepted-only)   exit 0",
-      "  - accepted changes have not changed for --settle seconds              exit 0",
-      "  - --timeout minutes have passed                                       exit 2",
-      "A failed check is retried on the next one. No trail attached, or a token Trail refuses: exit 1.",
-    ].join("\n"),
-  )
-  .action(
-    async (
-      dir: string,
-      opts: { interval: string; settle: string; timeout: string; acceptedOnly?: boolean; json?: boolean; verbose?: boolean },
-    ) => {
-      const repo = resolve(dir);
-      const interval = positiveNumber(opts.interval);
-      const settle = Number(opts.settle);
-      const timeout = positiveNumber(opts.timeout);
-      if (interval === null || timeout === null || !Number.isFinite(settle) || settle < 0) {
-        console.error("✗ --interval and --timeout take a number above zero, --settle a number of seconds (0 or more)");
-        process.exitCode = 1;
-        return;
-      }
-      const timeoutMs = timeout * 60_000;
-      const finish = (r: WatchTrailResult) => {
-        if (opts.json) console.log(JSON.stringify(watchExitJson(r), null, 2));
-        else for (const line of watchExitLines(r, timeoutMs)) console.log(line);
-        trackWatchExit(repo, r);
-        const code = watchExitCode(r);
-        if (code !== 0) process.exitCode = code;
-      };
-      const link = readLink(repo);
-      if (!link) {
-        finish({ reason: "no_trail", suggested: null, accepted: 0, files: [], reviewUrl: "", waitedMs: 0, everRead: false });
-        return;
-      }
-      const result = await watchTrail(repo, link, {
-        wired: pickedAgents(repo),
-        intervalMs: interval * 1000,
-        settleMs: settle * 1000,
-        timeoutMs,
-        acceptedOnly: opts.acceptedOnly === true,
-        onTick: opts.verbose
-          ? (r) => {
-              const at = new Date().toTimeString().slice(0, 8);
-              if (!r.ok) console.error(`· ${at} ${r.fatal ? "refused" : "retrying next check"}: ${r.error}`);
-              else console.error(`· ${at} ${r.snapshot.suggested ?? "?"} suggested, ${r.snapshot.accepted} accepted`);
-            }
-          : undefined,
-      });
-      finish(result);
-    },
-  );
-}
-
-function pushCommand(name = "push"): Command {
-  return new Command(name)
-  .description("Read THIS repo on your machine and build its trail — no GitHub App, works on private repos")
-  .argument("[dir]", "target repo directory", ".")
-  .option("--no-approve", "leave the mined rules as drafts for review")
-  .option("--no-watch", "return as soon as the push is sent, without following the build")
-  .option("--verbose", "print each step's counts and every build stage as it finishes")
-  .action(async (dir: string, opts: { approve?: boolean; watch?: boolean; verbose?: boolean }) => {
-    const repo = resolve(dir);
-    const tty = Boolean(process.stderr.isTTY);
-    const verbose = opts.verbose === true;
-    // Resolved before the link, because an unlinked repo now signs up for a
-    // trail and Trail creates that trail FOR a named repository. Without a slug
-    // there is nothing to name it after — and the digest builder would fail on
-    // the same missing remote a moment later regardless.
-    const here = repoSlugFromGit(repo);
-    let link = readLink(repo);
-    // Set when this run opened the browser, which then sits on Trail's build
-    // page: the closing lines point at that tab instead of printing a new link.
-    let browserOpen = false;
-    if (!link && process.env[AUTOPUSH_CHILD_ENV]) {
-      // Started in the background by the session-start hook, which only does so
-      // for a repo with a trail. The link has gone since (a disconnect in the
-      // same moment): signing up would open a browser nobody asked for, so stop.
-      console.error("· background push skipped — this repo no longer has a trail attached");
-      return;
-    }
-    if (!link) {
-      if (!here) {
-        console.error(`✗ this directory has no GitHub origin remote — ${brand()} can only push a GitHub repository today`);
-        process.exitCode = 1;
-        return;
-      }
-      const signedUp = await signUpForBrain(repo, `${here.owner}/${here.name}`);
-      if (!signedUp) {
-        if (!process.exitCode) process.exitCode = 1;
-        return;
-      }
-      link = signedUp;
-      browserOpen = true;
-    }
-    // What the website said this trail is for. Checked BEFORE any reading, so
-    // standing in the wrong checkout costs a message rather than a trail full
-    // of another repository's rules — a mistake that is silent afterwards,
-    // because the rules look perfectly plausible, just not about your code.
-    const expected = await fetchExpectedRepo(link);
-    if (expected && here && !sameRepo(expected.slug, `${here.owner}/${here.name}`)) {
-      console.error(`✗ this trail is for ${expected.slug}, but you are in ${here.owner}/${here.name}`);
-      console.error(`  cd into ${expected.slug} and run this again, or attach a different trail here.`);
-      process.exitCode = 1;
-      return;
-    }
-    const ctx = pushContext(repo);
-    if (!ctx) {
-      console.error(`✗ this directory has no GitHub origin remote — ${brand()} can only push a GitHub repository today`);
-      process.exitCode = 1;
-      return;
-    }
-    const firstPush = !expected || expected.ruleCount === 0;
-
-    // The instruction files and the newest pull requests go first, when the
-    // trail takes them: its suggestions start from those while the rest of the
-    // history is still being read here. In the background, from here on — the
-    // picker, the graph build and the full read all happen while it goes, and
-    // the full read reuses every GitHub request it made.
-    let early: Promise<void> = Promise.resolve();
-    if (expected?.earlyUpload) {
-      early = (async () => {
-        const first = await buildEarlyDigest(repo, { context: ctx });
-        if (!first) return;
-        const ok = await pushEarlyDigest(link!, first.digest, fetch, { gzip: expected.gzipUpload });
-        if (ok && verbose) console.error("· sent the instruction files and the newest pull requests first, so suggestions start now");
-      })().catch(() => undefined);
-    }
-
-    // A repo graft was never set up in gets `graft init` first. Same picker as
-    // init: it is how someone agrees to what gets written, so a
-    // non-interactive push only says what to run.
-    if (wiredHostIds(repo).length === 0) {
-      if (process.stdin.isTTY && tty) {
-        console.error(`· ${brand()} isn't set up here yet — pick the agents your team uses:`);
-        await runInitCommand(
-          repo,
-          { build: true, mcp: true, hooks: true, statusline: true, global: true, verbose },
-          { epilogue: false, push: !verbose },
-        );
-      } else {
-        console.error(`· ${brand()} isn't set up here — run ${cmd("graft init")} so your agents read these rules`);
-      }
-    }
-
-    // The graph is what symbol anchors are resolved against, so a rule mined
-    // here can later go stale on its own. Without one the ingest still works;
-    // its rules simply govern the repo rather than a symbol in it.
-    const graph = loadGraphCached(contextDirFor(repo, program.opts<GlobalOpts>().dir));
-    if (!graph) console.error(`· no graph yet — run ${cmd("graft build")} so rules can be anchored to symbols`);
-    const reading = startSpinner(`reading ${ctx.owner}/${ctx.name} · commits, pull-request discussion and the docs in the tree`);
-    const built = await buildLocalDigest(repo, graph, { autoApprove: opts.approve !== false, context: ctx });
-    if ("error" in built) {
-      reading.stop();
-      console.error(`✗ ${built.error}`);
-      process.exitCode = 1;
-      return;
-    }
-    const d = built.digest;
-    reading.update("sending it to Trail");
-    await early;
-    const sent = await pushDigest(link, d, fetch, uploadCaps(expected));
-    reading.stop();
-    if (built.warning) console.error(`⚠ ${built.warning}`);
-    if ("error" in sent) {
-      console.error(`✗ ${sent.error}`);
-      process.exitCode = 1;
-      return;
-    }
-    // What the session-start hook's background refresh compares HEAD against:
-    // a push of history Trail already has would mine the same rules again.
-    recordTrailPush(repo, ctx.headSha);
-    const fmt = (x: number) => x.toLocaleString("en-US");
-    const trailLabel = expected?.brainName ? `“${expected.brainName}”` : `${d.owner}/${d.name}`;
-    console.error(
-      `✓ sent ${fmt(d.commits.length)} commits and ${fmt(d.threads.length)} discussions to ${trailLabel} · no file contents left this machine`,
-    );
-    if (verbose) console.error(`  ${fmt(d.symbols.length)} symbols, ${fmt(d.sources.length)} stated sources`);
-
-    const buildPage = brainUrl(link.brainId);
-    // Held rather than handed back. Everything above this line succeeded even
-    // in the runs that end badly: the push lands, and then the miner fails —
-    // which is where roughly a third of production's repo trails die. Returning
-    // the prompt here is what made that invisible from this side, on CI and
-    // over SSH permanently so. `--no-watch` is for a caller that genuinely
-    // wants fire-and-forget.
-    if (opts.watch === false) {
-      console.error("· building now — the rules reach this repo on their own; watch it at");
-      console.error(`  ${buildPage}`);
-      return;
-    }
-
-    const live = tty && !verbose;
-    if (!live) console.error("· building the trail");
-    const spinner = live ? startSpinner("building the trail · reaching the repository · Ctrl-C detaches") : null;
-    let last: RepoState | null = null;
-    // Ctrl-C detaches: the work is server-side, and killing a watcher must
-    // never look like killing the build.
-    const onSigint = () => {
-      spinner?.stop();
-      console.error("· detached — the build keeps going; watch it at");
-      console.error(`  ${buildPage}`);
-      process.exit(130);
-    };
-    process.once("SIGINT", onSigint);
-    const outcome = await watchBuild(link, {
-      events: expected?.events === true,
-      stageLines: !live,
-      write: (line) => (spinner ? spinner.print(line) : console.error(line)),
-      onState: (view, repoState) => {
-        last = repoState;
-        spinner?.update(`building the trail · ${DOING_LABEL[currentStage(view)]} · Ctrl-C detaches`);
-      },
-    });
-    process.off("SIGINT", onSigint);
-    spinner?.stop();
-
-    const ruleCount = rulesSoFar(last);
-    const rules = `${fmt(ruleCount)} rule${ruleCount === 1 ? "" : "s"}`;
-    const wired = [...new Set([...(readStamp(repo)?.hosts ?? []), ...wiredHostIds(repo)])];
-    const closing = () => {
-      const line = suggestionsLine((last as RepoState | null)?.suggestions, wired, !firstPush);
-      if (!line) return;
-      if (browserOpen) {
-        console.error(`${line} — they are in the Trail tab in your browser`);
-        console.error(`  ${reviewUrl(link!.brainId)}`);
-      } else {
-        console.error(line);
-        console.error(`  review: ${reviewUrl(link!.brainId)}`);
-      }
-    };
-    if (outcome === "completed") {
-      console.error(`✓ trail built · ${rules}, reaching this repo on their own`);
-      closing();
-      return;
-    }
-    // The ordinary ending for anything but a small repository. The history is
-    // mined in slices, and the prompt comes back on the first of them: mining is
-    // the part that fails and it has now succeeded, and the rest is filing,
-    // which is minutes of reliable work nobody gains by watching.
-    if (outcome === "building") {
-      console.error(
-        firstPush
-          ? `✓ trail has its first ${rules} · they reach this repo on their own`
-          : `✓ trail updated · ${rules}, reaching this repo on their own`,
-      );
-      closing();
-      return;
-    }
-    if (outcome === "failed") {
-      // A non-zero exit, unlike every other ending here: this is the one case
-      // where the work did not produce a trail, and a CI step that ran the push
-      // should hear about it the way it hears about any other failure. The
-      // watcher has already printed where it stopped and why.
-      process.exitCode = 1;
-      return;
-    }
-    if (outcome === "unreachable") {
-      console.error("· lost touch with Trail — the build keeps going; watch it at the link below");
-    } else {
-      console.error("· still building after 15 minutes — not failed, just long; watch it at the link below");
-    }
-    console.error(`  ${buildPage}`);
-  });
-}
-
-// `graft claude-md pull` is `graft trail pull` now: the CLAUDE.md changes are
-// the first half of what that writes. Kept so the old name keeps working, but
-// hidden from --help so people only ever see one pull command.
-const claudeMd = program
-  .command("claude-md", { hidden: true })
-  .description("The CLAUDE.md changes this repo's trail suggested (now part of graft trail pull)");
-
-claudeMd
-  .command("pull")
-  .description("Same as graft trail pull: write every change you accepted in Trail into this repo")
-  .argument("[dir]", "target repo directory", ".")
-  .option("--dry-run", "show what would change without writing anything or telling Trail")
-  .action(async (dir: string, opts: { dryRun?: boolean }) => {
-    console.error(`· ${brand()} claude-md pull is now part of ${cmd("graft trail pull")} — running that`);
-    await runTrailPullCommand(dir, opts);
-  });
-
-function brainStatusCommand(name = "status"): Command {
-  return new Command(name)
-  .description("Show the attached brain, how many rules are cached, and how many still match the code")
-  .argument("[dir]", "target repo directory", ".")
-  .option("--json", "machine-readable output")
-  .action((dir: string, opts: { json?: boolean }) => {
-    const repo = resolve(dir);
-    const { link, rules, fetchedAt } = brainStatus(repo);
-    // Resolve every cached rule against the CURRENT graph, so the count of stale
-    // rules is the real one rather than what was true at pull time. This is the
-    // number worth surfacing: it says how far the codebase has drifted from what
-    // the team decided.
-    const graph = loadGraphCached(contextDirFor(repo, program.opts<GlobalOpts>().dir));
-    const applied = rulesForPointers(
-      (graph?.nodes ?? []).map((n) => `${n.path}:${n.span}`),
-      rules,
-      graph,
-    );
-    if (opts.json) {
-      console.log(JSON.stringify({ brainId: link?.brainId ?? null, cached: rules.length, fetchedAt, anchored: applied.length, stale: applied.filter((a) => a.stale).length }, null, 2));
-      return;
-    }
-    if (!link) {
-      console.error(`· no brain attached — run \`${cmd("graft trail connect")} <brainId>:<token>\``);
-      return;
-    }
-    console.error(`brain ${link.brainId}`);
-    console.error(`  ${rules.length} rule(s) cached${fetchedAt ? `, pulled ${new Date(fetchedAt).toISOString()}` : ""}`);
-    if (!graph) {
-      console.error(`  no graph yet — run \`${cmd("graft build")}\` to see which rules still match the code`);
-      return;
-    }
-    const stale = applied.filter((a) => a.stale);
-    console.error(`  ${applied.length} anchored to symbols in this repo`);
-    console.error(
-      stale.length
-        ? `  ${stale.length} describe code that has changed since:`
-        : "  none describe code that has changed since",
-    );
-    for (const a of stale.slice(0, 10)) console.error(`    - ${a.rule}\n      ${a.pointer}`);
-  });
-}
-
-function disconnectCommand(name = "disconnect"): Command {
-  return new Command(name)
-  .description("Forget the attached brain (its rules stay in the instruction files until the next init)")
-  .argument("[dir]", "target repo directory", ".")
-  .action((dir: string) => {
-    const repo = resolve(dir);
-    clearLink(resolve(dir));
-    console.error(`✓ detached the brain from ${repo}`);
-  });
-}
 
 /* -------------------------------------------------------------------------- */
 /* trail login · logout · workspace                                           */
@@ -2841,7 +2186,7 @@ function shortCount(n: number): string {
 }
 
 /**
- * `trail status`: what was `graft stats` and `graft trail status`, on one
+ * `trail status`: what was `graft stats`, on one
  * screen. The code map and whether it matches the code, the learnings for
  * this repo, the workspace, and what the agents saved this week.
  */
@@ -2862,9 +2207,6 @@ function statusCommand(name = "status"): Command {
       const personal = all.filter((n) => n.scope === "personal").length;
       const cloud = readCloud();
       const shared = cloud ? inWorkspace(repo, cloud) : false;
-      const { link, rules } = brainStatus(repo);
-      const anchored = link && graph ? rulesForPointers(graph.nodes.map((n) => `${n.path}:${n.span}`), rules, graph) : [];
-      const matching = anchored.filter((a) => !a.stale).length;
       const saved = savedThisWeek(repo);
 
       if (opts.json) {
@@ -2874,7 +2216,6 @@ function statusCommand(name = "status"): Command {
               codeMap: graph ? { nodes: graph.meta.nodeCount, inSync: fresh } : null,
               learnings: kept ? { repo: inRepo, branches: onBranches, personal } : null,
               workspace: cloud ? { name: cloud.workspace.name, url: cloud.workspace.url, repos: cloud.repos.length, thisRepo: shared } : null,
-              rules: link ? { brainId: link.brainId, cached: rules.length, anchored: anchored.length, matching } : null,
               week: { savedTokens: saved },
             },
             null,
@@ -2901,34 +2242,18 @@ function statusCommand(name = "status"): Command {
           "workspace",
           `${cloud.workspace.name} · ${cloud.repos.length} repo${cloud.repos.length === 1 ? "" : "s"}${shared ? ", this one included" : `, not this one (${cmd("graft workspace add")})`} · ${cloud.workspace.url}`,
         );
-      if (link)
-        row("rules", `${fmt(rules.length)} cached from Trail` + (graph && anchored.length ? `, ${fmt(matching)} of ${fmt(anchored.length)} anchored still match the code` : ""));
       row("this week", saved > 0 ? `~${shortCount(saved)} tokens saved` : "nothing saved yet");
     });
 }
 
 if (TRAIL) {
-  // The old `graft trail …` group, at the top level: `trail push`, `trail
-  // login`. `connect` and `watch` still run, unlisted — connect so the
-  // handoff links Trail already sent keep working.
   for (const c of [teamCheckCommand(), teamCommand()]) program.addCommand(c.helpGroup(GROUP.memory));
   // Signing in waits until it gives a team more than committing .trail/ does.
   for (const c of [workspaceCommand(), loginCommand(), logoutCommand()]) program.addCommand(c.helpGroup(GROUP.cloud), { hidden: !cloudEnabled() });
-  // The brain's rules (`trail push`, `trail pull`) still run, unlisted: a
-  // workspace is how a team shares now.
-  program.addCommand(pushCommand(), { hidden: true });
-  program.addCommand(pullCommand(), { hidden: true });
-  program.addCommand(connectCommand(), { hidden: true });
-  program.addCommand(watchCommand(), { hidden: true });
   program.addCommand(statusCommand().helpGroup(GROUP.setup));
 
-  // `trail trail push` and the rest, for fingers that learned graft.
-  const habit = program.command("trail", { hidden: true }).description("The old graft trail … commands");
-  for (const c of [connectCommand(), pullCommand(), watchCommand(), pushCommand(), statusCommand(), disconnectCommand()])
-    habit.addCommand(c);
-
   // Help lists the groups in this order, and the commands within each.
-  const order = ["ask", "grep", "skeleton", "callers", "map", "note", "check", "team", "learn", "skills", "init", "build", "status", "upgrade", "uninstall", "telemetry", "workspace", "login", "logout", "push", "pull", "blast"];
+  const order = ["ask", "grep", "skeleton", "callers", "map", "note", "check", "team", "learn", "skills", "init", "build", "status", "upgrade", "uninstall", "telemetry", "workspace", "login", "logout", "blast"];
   const rank = (c: Command) => {
     const i = order.indexOf(c.name());
     return i === -1 ? order.length : i;
@@ -2960,16 +2285,9 @@ if (TRAIL) {
   };
   for (const c of program.commands) if (summaries[c.name()]) c.summary(summaries[c.name()]!);
   program.addHelpText("after", "\ntrail <command> --help for flags · every graft command still works");
-} else {
-  // `graft trail …` still works: see legacy-args.ts.
-  const brain = program
-    .command("trail")
-    .description("The Trail attached to this repo: the rules mined from its own history");
-  for (const c of [connectCommand(), pullCommand(), watchCommand(), pushCommand(), brainStatusCommand(), disconnectCommand()])
-    brain.addCommand(c);
 }
 
-program.parseAsync(withLegacyNames(process.argv)).catch((err) => {
+program.parseAsync(process.argv).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

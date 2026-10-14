@@ -29,15 +29,11 @@ test("unset means graft: anything that loads cli.js directly was wired by an old
 });
 
 test("cmd spells a graft command the way the running name does", () => {
-  for (const s of ["graft ask", "graft check", "graft trail push", "graft build --deep"]) assert.equal(cmd(s, "graft"), s);
+  for (const s of ["graft ask", "graft check", "graft build --deep"]) assert.equal(cmd(s, "graft"), s);
   assert.equal(cmd("graft ask", "trail"), "trail ask");
   assert.equal(cmd("graft build --deep", "trail"), "trail build --deep");
   assert.equal(cmd("graft check", "trail"), "trail build --check");
   assert.equal(cmd("graft stats", "trail"), "trail status");
-  assert.equal(cmd("graft trail status", "trail"), "trail status");
-  assert.equal(cmd("graft trail push", "trail"), "trail push");
-  assert.equal(cmd("graft trail connect", "trail"), "trail login");
-  assert.equal(cmd("graft trail disconnect", "trail"), "trail logout");
   // A prefix only matches a whole word: `graft checkout` is not `graft check`.
   assert.equal(cmd("graft checkout", "trail"), "trail checkout");
 });
@@ -147,11 +143,12 @@ test("trail --help groups the commands, and lists the workspace ones only once s
   for (const c of ["workspace", "login", "logout"]) assert.match(on.out, new RegExp(`^  ${c} `, "m"), c);
 });
 
-test("graft --help keeps its old flat list, including check and the trail group", () => {
+test("graft --help keeps its old flat list, including check, without the trail group", () => {
   const r = run("graft", ["--help"], scratchHome());
   assert.equal(r.status, 0);
   assert.match(r.out, /^Usage: graft /m);
-  for (const c of ["check", "stats", "viz", "trail"]) assert.match(r.out, new RegExp(`^  ${c} `, "m"), c);
+  for (const c of ["check", "stats", "viz"]) assert.match(r.out, new RegExp(`^  ${c} `, "m"), c);
+  assert.doesNotMatch(r.out, /^  trail /m);
   assert.ok(!r.out.includes("Workspace ·"));
 });
 
@@ -195,23 +192,12 @@ test("trail status puts the code map on one screen, and the workspace only once 
   assert.equal(json.workspace, null);
 });
 
-test("old spellings keep working under trail: trail trail status, trail brain status, trail stats", () => {
+test("trail stats still works under trail", () => {
   const home = scratchHome();
   const d = builtRepo();
   run("trail", ["build", d], home);
-  for (const args of [["trail", "status", d], ["brain", "status", d], ["stats", d]]) {
-    const r = run("trail", args, home);
-    assert.equal(r.status, 0, `${args.join(" ")}: ${r.err}`);
-  }
-  assert.match(run("trail", ["trail", "status", d], home).out, /^code map/m);
-});
-
-test("graft trail status is unchanged", () => {
-  const home = scratchHome();
-  const d = builtRepo();
-  const r = run("graft", ["trail", "status", d], home);
-  assert.equal(r.status, 0);
-  assert.match(r.err, /no brain attached — run `graft trail connect <brainId>:<token>`/);
+  const r = run("trail", ["stats", d], home);
+  assert.equal(r.status, 0, r.err);
 });
 
 test("the savings footer says [trail] under trail and [graft] under graft", () => {
