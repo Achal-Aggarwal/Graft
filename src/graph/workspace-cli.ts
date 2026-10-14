@@ -8,7 +8,7 @@
 import { Graft } from "../engine.js";
 import { contextDirFor, ensureGitignored } from "../context/node-file.js";
 import { patchBuildConfig, type BuildConfig } from "../util/state.js";
-import { brand, PACKAGE_FOR } from "../brand.js";
+import { brand, cmd, PACKAGE_FOR } from "../brand.js";
 import { nativeFallbackNotice } from "./native.js";
 import type { EngineConfig } from "../ai/providers.js";
 import { formatAsk } from "../ask/ask.js";
@@ -91,7 +91,7 @@ export async function runWorkspaceBuild(root: string, opts: WorkspaceBuildOption
   // index (graft/workspace.json) is written outside buildGraph, so ignore it here too.
   ensureGitignored(root, contextDirFor(root, opts.override));
   console.log(`✓ workspace: ${children.length} repos federated → graft/workspace.json`);
-  console.log(`  graft/ is git-ignored — each teammate runs \`graft build\` to regenerate it locally.`);
+  console.log(`  graft/ is git-ignored — each teammate runs \`${cmd("graft build")}\` to regenerate it locally.`);
   const notice = nativeFallbackNotice(
     { languages: [...fellBack.languages].sort(), packages: [...fellBack.packages].sort() },
     opts.packageName ?? PACKAGE_FOR[brand()],

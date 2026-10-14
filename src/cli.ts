@@ -24,7 +24,7 @@ import { statuslineWanted } from "./claude/settings-merge.js";
 import { runHostsInit } from "./hosts/init.js";
 import { hostIds } from "./hosts/registry.js";
 import { checkoutRoot, ensureRepoHome, keepsNotes, noteCount, rememberRepo, repoName, repoPlace, shownPath } from "./notes/home.js";
-import { brand, cmd, graftNotice, tag } from "./brand.js";
+import { brand, cmd, graftNotice, strandedRepoNotice, tag } from "./brand.js";
 import { branchDiff } from "./cloud/diff.js";
 import { openBrowser } from "./util/browser.js";
 import { contextDirFor } from "./context/node-file.js";
@@ -274,6 +274,10 @@ program.hook("preAction", (_parent, action) => {
   // hooks, CI and pipes never see it (see graftNotice).
   const renamed = graftNotice({ ran: spelling(action), tty: Boolean(process.stderr.isTTY) });
   if (renamed) console.error(renamed);
+  // Someone typing trail in a repo whose graft-era hooks can't reach it learns
+  // the one command that moves it (init itself is that command).
+  const stranded = action.name() === "init" ? null : strandedRepoNotice({ cwd: process.cwd(), tty: Boolean(process.stderr.isTTY) });
+  if (stranded) console.error(stranded);
   maybeRefreshInBackground();
   const nudge = formatUpdateNudge(currentVersion, readUpdateCache()?.latest);
   if (nudge) console.error(nudge);
@@ -1719,6 +1723,7 @@ function wireTarget(
         mcp: opts.mcp,
         hooks: opts.hooks,
         global: opts.global,
+        brand: brand(),
       });
       for (const w of r.written) say(`✓ ${w.id}: ${w.path} (${w.action})`);
       for (const m of r.mcp) say(`✓ mcp ${m.id}: ${m.path} (${m.action})`);
