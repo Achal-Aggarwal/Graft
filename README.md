@@ -70,7 +70,7 @@ npm install -g @trailhq/trail-code && trail init
 
 **Same model, more tasks solved.** On SWE-bench Verified (real GitHub issues, graded by the maintainers' own tests), Claude Sonnet 5 solved **33 of 50** issues with the graft map and **27 of 50** without it, using 23% fewer tokens. [Details](#swe-bench-verified)
 
-**Cheaper and faster.** Across 162 runs of the same agent on the same tasks: **32% lower cost**, **42% fewer tokens**, **60% less time**, and the same share of correct answers. On popular open-source repos, up to **4× cheaper** and **3× faster**. [Details](#benchmark)
+**Cheaper and faster.** Across 162 runs of the same agent on the same tasks: **32% lower cost**, **42% fewer uncached input tokens**, **60% less time**, and the same share of correct answers. On PocketBase, 15 real tasks ran **21% cheaper** and **14% faster**. [Details](#benchmark)
 
 ---
 
@@ -152,11 +152,11 @@ The graft map builds that understanding once, and keeps it current:
 - **Plain files you can read.** Linked markdown nodes your agent opens and greps like any other file. No embeddings, no index to keep warm.
 - **Summaries if you want them.** `trail build --deep` adds plain-English summaries of each part of the system, written by the model provider you choose, under your own key.
 
-| | Cold Claude Code | Claude Code with the graft map |
+| | Cold agent | Agent with the graft map |
 |---|---|---|
 | SWE-bench Verified, 50 real issues | 27 solved | **33 solved (+12 pts)** |
-| Our benchmark, 162 runs | baseline | **32% lower cost, 42% fewer tokens, 60% less time** |
-| Popular open-source repos | baseline | **up to 4× cheaper, 3× faster** |
+| Our benchmark, 162 runs | baseline | **32% lower cost, 42% fewer uncached input tokens, 60% less time** |
+| PocketBase, 15 real tasks | baseline | **21% cheaper, 14% faster** |
 
 How it is measured: [Benchmark](#benchmark), [SWE-bench Verified](#swe-bench-verified) and [Tested on popular repos](#tested-on-popular-repos). How it is built: [the reference](#how-the-graph-gets-built).
 
