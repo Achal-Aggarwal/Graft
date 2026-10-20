@@ -23,6 +23,7 @@ import {
   writeNote,
   type Note,
 } from "../src/notes/notes.js";
+import { learningId } from "../src/notes/learning-fields.js";
 import { aboutTerms, costFromTranscript, FALLBACK_ACTIVE_MS } from "../src/notes/session-cost.js";
 import { ensureRepoHome, repoPlace } from "../src/notes/home.js";
 import { homeEnv, tmpRepo } from "./helpers.js";
@@ -62,7 +63,8 @@ test("a note round-trips through its file, frontmatter and all", () => {
   const n = note();
   const text = renderNote(n);
   assert.match(text, /^---\ntitle: Bbox coordinates are off on rotated PDFs\nauthor: Priya\ndate: 2026-10-07\nbranch: fix\/bbox-rotation\ncost: \{ minutes: 12, tokens: 9600 \}\ntouches:\n  - "internal\/ocr\/bbox.go#NormalizeBox"\n  - internal\/ocr\/client.go\n---\n\n## Decided/);
-  assert.deepEqual(parseNote(text, n.path), n);
+  // Written without the newer fields, it reads back with their defaults.
+  assert.deepEqual(parseNote(text, n.path), { ...n, id: learningId("2026-10-07-bbox-priya.md"), status: "active" });
 });
 
 test("titles that YAML would misread are quoted, and still come back intact", () => {
