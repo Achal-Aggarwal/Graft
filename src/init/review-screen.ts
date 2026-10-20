@@ -67,7 +67,7 @@ export const INIT_COPY: Record<string, string> = {
   keptMixed: "✓ kept {k} · {j} just for you in ~/.trail, never uploaded · {r} added to this repo's .trail/learnings (commit it to share)",
   notKept: "Not kept: {names}. Trail won't bring {them} up again.",
   refused: "{name}: its past session changed or is gone, so Trail can't check the steps. It will offer it again after the job checks out.",
-  offersOn: 'skill offers: on, at most one per session, only after a job checks out · trail skills offers off',
+  offersOn: 'skills: on · at most one offer per session, only after a job checks out · stop offers: trail skills offers off · all off: trail skills off',
   offersOff: 'skill offers are off (you turned them off on {date}) · trail skills offers on',
   afterEsc: 'kept nothing · they wait until you run trail init again',
   afterN: "kept nothing · Trail won't bring these up again",

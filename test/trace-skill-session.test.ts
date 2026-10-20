@@ -27,7 +27,7 @@ function box(opts: { skills?: boolean; lab?: boolean } = {}) {
   // TRAIL_HOME apart from $HOME/.trail: a test home, where the test clock is honoured.
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: homeDir, TRAIL_HOME: join(homeDir, "trail-home"), CLAUDE_CODE_ENTRYPOINT: "cli" };
   mkdirSync(env.TRAIL_HOME!, { recursive: true });
-  if (opts.skills !== false) writeFileSync(join(env.TRAIL_HOME!, "settings.json"), JSON.stringify({ v: 1, skills: "on" }));
+  writeFileSync(join(env.TRAIL_HOME!, "settings.json"), JSON.stringify({ v: 1, skills: opts.skills === false ? "off" : "on" }));
   if (opts.lab) writeFileSync(join(homeDir, ".trail-lab"), "");
   const transcript = join(homeDir, ".claude", "projects", "-home-dev-shop", `${SID}.jsonl`);
   mkdirSync(join(transcript, ".."), { recursive: true });

@@ -348,6 +348,7 @@ test("only cli-skills.ts uses the person-only setters, only offers.ts the bookke
   const rules: Array<{ names: RegExp; allowed: string[] }> = [
     { names: /\b(?:setSkills|setOffers|setSkillOff)\b/, allowed: ["skills/settings.ts", "skills/cli-skills.ts"] },
     { names: /\b(?:pauseRepo|noteGovernor)\b/, allowed: ["skills/settings.ts", "skills/offers.ts"] },
+    { names: /\bnoteSkillsStarted\b/, allowed: ["skills/settings.ts", "claude/skills-wiring.ts"] },
   ];
   const settings = join(SRC, "skills", "settings.ts");
   const bad: string[] = [];

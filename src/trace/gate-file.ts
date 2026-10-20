@@ -315,12 +315,12 @@ export function takePostMarks(sessionId: string, env: NodeJS.ProcessEnv = proces
   }
 }
 
-/** settings.json's `skills === 'on'`, read with fs only. */
+/** Skills on, read from settings.json with fs only: on unless it says `skills: 'off'`, as `readSettings` reads it. */
 export function skillsOnFast(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
     const v: unknown = JSON.parse(fs().readFileSync(join(trailHomeFast(env), 'settings.json'), 'utf8'));
-    return !!v && typeof v === 'object' && !Array.isArray(v) && (v as { skills?: unknown }).skills === 'on';
+    return !(!!v && typeof v === 'object' && !Array.isArray(v) && (v as { skills?: unknown }).skills === 'off');
   } catch {
-    return false;
+    return true;
   }
 }
