@@ -48,6 +48,7 @@ import { planInit, selectedWrites } from "./hosts/plan.js";
 import { planRetract, runRetract, changed, type Retraction } from "./hosts/retract.js";
 import { compactWrites, formatNonInteractiveHelp, formatPlan, pickLearnings, runPicker } from "./cli-picker.js";
 import { buildGraphWithProgress } from "./claude/build-progress.js";
+import { installBrainsServer, removeBrainsServer } from "./hosts/claude-global.js";
 import { homedir } from "node:os";
 import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, readPackageName, runUpgrade } from "./cli-meta.js";
 import { nativeFallbackNotice } from "./graph/native.js";
@@ -62,7 +63,17 @@ import { beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/p
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
 import { confirm, fold, getSkill, learn, listSkills, publish, skillForAgent, skillName, skillStatus, type LearnResult } from "./skills/skills.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
-import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, writeCloud, type Cloud } from "./cloud/workspace.js";
+import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, trailUrl, writeCloud, type Cloud } from "./cloud/workspace.js";
+import {
+  claimConnectCode,
+  learningsSummary,
+  machineName,
+  normalizeCode,
+  OnboardingReporter,
+  repoRef,
+  teammatesFromGit,
+  tokensOnOneLookup,
+} from "./cloud/onboarding.js";
 import { inWorkspace, maybeSyncInBackground, recordActivity, runSyncChild, syncRepo } from "./cloud/workspace-sync.js";
 import type { CheckResult } from "./check/types.js";
 import { checkLocally } from "./check/local-check.js";
@@ -957,9 +968,14 @@ program
   .command("mcp", { hidden: TRAIL })
   .description("Serve the graph over MCP (stdio) — exposes graft_find_code, graft_trace_calls, graft_find_all, graft_file_api, graft_repo_map and graft_check_freshness as tools")
   .argument(...DIR_ARG)
-  .action(async (dirArg: string | undefined) => {
-    const dir = noteQuery(queryRoot(dirArg));
+  .option("--brains", "serve only the connected Trail workspace's brain tools (what Claude Code gets after init --connect)")
+  .action(async (dirArg: string | undefined, opts: { brains?: boolean }) => {
     const { startMcpServer } = await import("./mcp/server.js");
+    if (opts.brains) {
+      startMcpServer(process.cwd(), undefined, currentVersion, { brainsOnly: true });
+      return;
+    }
+    const dir = noteQuery(queryRoot(dirArg));
     const globalOpts = program.opts<{ dir?: string }>();
     startMcpServer(dir, globalOpts.dir, currentVersion);
   });
@@ -1295,8 +1311,14 @@ grouped(program.command("init"), GROUP.setup)
   .option("-y, --yes", "skip the picker and wire every detected agent (the pre-0.8 default)")
   .option("--no-global", "skip writes outside this repo (the ~/.codex/ config + hooks)")
   .option("--verbose", "print every file written, the graph build's own output and the closing banner")
+  .option(
+    "--connect <code>",
+    "connect this machine to your Trail workspace with the one-time code from app.trailhq.com, and send it a summary of this repo (titles, counts and names; never code)",
+  )
+  .option("--server <url>", "with --connect: the Trail to connect to, e.g. https://dev.trailhq.com or http://localhost:5173 (default: TRAIL_URL, else https://app.trailhq.com)")
   .action(async (dir: string, opts: InitOptions) => {
-    await runInitCommand(dir, opts);
+    if (opts.connect !== undefined) await runConnectInit(dir, opts);
+    else await runInitCommand(dir, opts);
   });
 
 /** Everything on stdin, or "" when nothing is piped in. */
@@ -1421,7 +1443,14 @@ function printLines(lines: string[]): void {
 }
 
 /** `graft init`'s flags, as commander hands them over. */
-interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean }
+interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean; connect?: string; server?: string }
+
+/** What `init --connect` hears from a run of init, as it happens: the stages the web page ticks off. */
+interface InitProgress {
+  mapped?(m: { nodes: number; edges: number; files: number }): void;
+  /** What init learned this run (team and personal), and how many past sessions it read; `notes` is empty when it learned nothing new. */
+  learned?(l: { notes: Array<{ note: Note; sessions?: number }>; sessions: number }): void;
+}
 
 /** Repo-relative with forward slashes, for printing. */
 function shown(repo: string, path: string): string {
@@ -1429,7 +1458,7 @@ function shown(repo: string, path: string): string {
 }
 
 /** `graft init`. */
-async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: string[] } | null> {
+async function runInitCommand(dir: string, opts: InitOptions, progress?: InitProgress): Promise<{ ids: string[] } | null> {
     if (opts.listAgents) {
       for (const id of [...hostIds(), "claude"]) console.log(id);
       return null;
@@ -1570,6 +1599,15 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
       }
     }
 
+    if (progress?.mapped) {
+      const g = loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
+      progress.mapped({
+        nodes: g?.meta.nodeCount ?? 0,
+        edges: g?.meta.edgeCount ?? 0,
+        files: g ? g.nodes.filter((n) => n.kind === "file").length : 0,
+      });
+    }
+
     if (!verbose) {
       // Warnings and removals in full, whatever else is folded.
       const removed = [...new Set(reports.flatMap((r) => r.retracted))];
@@ -1610,8 +1648,12 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
           ? undefined
           : async (found: T[]) => picked && picked.filter((i) => i >= from && i < from + found.length).map((i) => found[i - from]!);
       const learned: Note[] = [];
+      const learnedFrom: Array<{ note: Note; sessions?: number }> = [];
+      let sessionsRead = 0;
       if (pastRead) {
         const { result, saved, kept, cancelled } = await finishPastRead(repo, pastRead, keepFrom<Finding>(0));
+        sessionsRead = result.read ?? 0;
+        saved.forEach((note, i) => learnedFrom.push({ note, sessions: kept[i]?.sessions.length }));
         const offered = result.findings.length;
         if (saved.length) {
           const n = saved.length;
@@ -1649,13 +1691,17 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
           console.error(`· couldn't read PR reviews this time; ${cmd("graft init")} again tries again`);
         }
         learned.push(...saved);
+        for (const note of saved) learnedFrom.push({ note, sessions: 0 });
       }
       learnedNow = learned.length > 0;
+      progress?.learned?.({ notes: learnedFrom, sessions: sessionsRead });
       if (learnedNow) {
         console.error("· Claude follows them from your next session");
         if (learned.some((s) => s.scope === "repo")) console.error(commitLines({}, teammatesOn(repo), "repo").uncommitted);
       }
     }
+    // Nothing read this run (already read once, or not Claude Code): the page still gets its stage.
+    if (!(TRAIL && (pastRead || reviewRead))) progress?.learned?.({ notes: [], sessions: 0 });
     if (TRAIL && !learnedNow) {
       const home = notesHome.get(repo);
       if (home) {
@@ -1714,6 +1760,107 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
       { repo },
     );
     return { ids };
+}
+
+/**
+ * `trail init --connect <CODE>`: the onboarding on app.trailhq.com. Claims the
+ * one-time code (a wrong or spent one stops here, before anything is written),
+ * saves the workspace token where `trail login` keeps it, then runs init as
+ * usual while the page ticks off connected, mapped and learned. At the end,
+ * one summary of the repo goes up (a lookup's tokens saved, the learnings'
+ * titles, teammates' branches from git: never code, diffs or session text),
+ * then `done`. Offline, init still sets the repo up and says how to connect.
+ */
+async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
+  if (opts.listAgents || opts.dryRun) {
+    if (opts.dryRun) console.error("· --dry-run: not connecting");
+    await runInitCommand(dir, opts);
+    return;
+  }
+  const repo = resolve(dir);
+  const server = opts.server?.trim().replace(/\/+$/, "");
+  if (server) {
+    if (!/^https?:\/\//.test(server)) {
+      console.error(`✗ --server takes a URL, like https://dev.trailhq.com`);
+      process.exitCode = 1;
+      return;
+    }
+    process.env.TRAIL_URL = server;
+  }
+  const base = trailUrl();
+  const code = normalizeCode(opts.connect ?? "");
+  if (!code) {
+    console.error(`✗ "${opts.connect ?? ""}" isn't a Trail code · it looks like TRL-7F2A-K9QD, from ${base}/welcome/code`);
+    process.exitCode = 1;
+    return;
+  }
+  const ref = repoRef(repo);
+  const machine = machineName();
+  const got = await claimConnectCode(base, code, { machine, repo: ref });
+  const cloud = "cloud" in got ? got.cloud : null;
+  if ("cloud" in got) {
+    const cloud = got.cloud;
+    writeCloud(cloud);
+    // A sign-in link out from before is moot now.
+    clearPending();
+    console.error(`✓ connected to workspace ${cloud.workspace.name}`);
+    track("brain_signup_settled", { outcome: "linked", mode: "connect", duration_bucket: durationBucket(0) }, { repo });
+  } else if (got.reason === "invalid") {
+    console.error(`✗ ${got.error} · get a new code at ${base}/welcome/code`);
+    process.exitCode = 1;
+    return;
+  } else {
+    console.error(`· couldn't reach Trail (${got.error}) · setting up this repo anyway; run ${cmd("graft init")} --connect ${code} again to connect`);
+  }
+  const reporter = cloud ? new OnboardingReporter(cloud, ref, { machine }) : null;
+  void reporter?.stage("connected");
+
+  // What init learned this run, kept for the summary.
+  const heard: { notes: Array<{ note: Note; sessions?: number }>; sessions: number } = { notes: [], sessions: 0 };
+  const progress: InitProgress | undefined = reporter
+    ? {
+        mapped: (m) => void reporter.stage("mapped", m),
+        learned: (l) => {
+          Object.assign(heard, l);
+          const team = learningsSummary(repo, l.notes);
+          void reporter.stage("learned", { learnings: team.length, sessions: l.sessions || Math.max(0, ...team.map((t) => t.sessions)) });
+        },
+      }
+    : undefined;
+  // The page's command is pasted into a terminal, but an agent may run it for
+  // them: with no terminal to pick in, wire the agents this machine has.
+  const interactive = process.stdin.isTTY && process.stderr.isTTY;
+  const res = await runInitCommand(dir, interactive ? opts : { ...opts, yes: true }, progress);
+  if (!reporter || !cloud) return;
+  if (!res) {
+    await reporter.flush();
+    return;
+  }
+
+  // What Trail found, for the page: route B, summaries only.
+  const learnings = learningsSummary(repo, heard.notes);
+  const sessions = heard.sessions || Math.max(0, ...learnings.map((l) => l.sessions));
+  const tokens = tokensOnOneLookup(repo, { contextDir: program.opts<GlobalOpts>().dir });
+  const teamNotes = listNotes(repo, { branches: false }).filter((n) => n.scope === "repo" && !n.ref);
+  const teammates = teammatesFromGit(repo, { learnings: teamNotes });
+  const sent = await reporter.summary({ tokens, ...(sessions ? { sessions } : {}), learnings, teammates });
+  await reporter.stage("done");
+  await reporter.flush();
+  // Claude Code gets the workspace's brains through one user-level `trail` entry.
+  const brainsEntry = res.ids.includes("claude") && opts.global !== false ? installBrainsServer(homedir()) : null;
+  if (sent) {
+    const parts = [
+      tokens ? `one lookup saved ${tokens.pct}% of the tokens` : null,
+      `${learnings.length} learning${learnings.length === 1 ? "" : "s"}`,
+      `${teammates.length} teammate branch${teammates.length === 1 ? "" : "es"} on your files`,
+    ].filter(Boolean);
+    console.error(`✓ sent ${cloud.workspace.name} a summary: ${parts.join(", ")} · titles, counts and names only, no code`);
+    console.error(`· see what Trail found: ${base}/welcome/code/found`);
+  } else {
+    console.error(`· couldn't send the summary to Trail this time; ${cmd("graft init")} --connect works again with a new code`);
+  }
+  if (brainsEntry?.action === "created" || brainsEntry?.action === "updated")
+    console.error(`✓ Claude Code gets your workspace's brains in every project · restart it to pick them up`);
 }
 
 /** What one target's wiring did, for the compact summary to report. */
@@ -1942,6 +2089,7 @@ function logoutCommand(name = "logout"): Command {
     .action(() => {
       const cloud = readCloud();
       clearPending();
+      removeBrainsServer(homedir());
       if (!clearCloud()) {
         console.error("· not connected to a workspace");
         return;
@@ -2323,6 +2471,8 @@ function statusCommand(name = "status"): Command {
       }
       if (!cloud) {
         if (cloudEnabled()) row("workspace", "not connected · Claude offers a link once there are learnings to share");
+      } else if (cloud.via === "connect") {
+        row("workspace", `${cloud.workspace.name} · gets a summary of the repos you run ${cmd("graft init")} --connect in · ${cloud.workspace.url}`);
       } else
         row(
           "workspace",

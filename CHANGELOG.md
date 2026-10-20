@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`trail init --connect <code>`**: the onboarding on app.trailhq.com. The
+  one-time code connects this machine to the workspace (the token goes where
+  `trail login` keeps it), the page ticks off connected, mapped and learned as
+  init runs, and one summary of the repo goes up: what one lookup on the code
+  map saved, the learnings' titles, and teammates' recently pushed branches
+  that change the files you work on. Titles, counts and names only; never
+  code, diffs or session text. `--server` (or `TRAIL_URL`) points it at
+  another Trail.
+- **Workspace brains in your agents**: once connected, `trail mcp` also serves
+  the workspace's `list_brains`, `get_context`, `search_rules` and `get_rules`,
+  passed to the workspace with your token; the repo tools keep working
+  offline. Claude Code gets one user-level `trail` entry that serves just
+  those (`trail mcp --brains`); `trail logout` takes it out.
+
 ## 0.23.0
 
 ### Changed

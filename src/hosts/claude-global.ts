@@ -122,7 +122,8 @@ export function installClaudeGlobal(home: string, brand: Brand = 'graft'): Globa
   // graft's keeps serving every repo still wired as graft; a trail repo turns
   // it off for its own folder (see disableGraftServerIn).
   if (brand === 'trail') {
-    out.push(dropUserServer(mcp.id, mcp.path, 'trail'));
+    // The workspace-brains server `init --connect` adds stays: it serves no repo tools.
+    out.push(dropUserServer(mcp.id, mcp.path, 'trail', isBrainsServer));
     return out;
   }
   try {
@@ -134,13 +135,14 @@ export function installClaudeGlobal(home: string, brand: Brand = 'graft'): Globa
   return out;
 }
 
-/** Remove one user-scope server from `~/.claude.json`, leaving everything else. */
-function dropUserServer(id: string, path: string, name: string): GlobalWrite {
+/** Remove one user-scope server from `~/.claude.json`, leaving everything else; `keep` spares an entry it accepts. */
+function dropUserServer(id: string, path: string, name: string, keep?: (entry: unknown) => boolean): GlobalWrite {
   try {
     const loaded = readJsonObject(path);
     if (loaded === 'unparseable') return { id, path, action: 'skipped-unparseable' };
     const servers = loaded.root.mcpServers;
     if (!servers || typeof servers !== 'object' || !(name in servers)) return { id, path, action: 'unchanged' };
+    if (keep?.(servers[name])) return { id, path, action: 'unchanged' };
     delete servers[name];
     writeFileSync(path, `${JSON.stringify(loaded.root, null, 2)}\n`);
     return { id, path, action: 'updated' };
@@ -214,4 +216,40 @@ export function fitTrailServerToMachine(home: string, folder: string, has: { tra
   } catch {
     return { id, path, action: 'skipped-unparseable' };
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* the workspace's brains, for Claude Code                                    */
+/* -------------------------------------------------------------------------- */
+
+/** The flag that makes `trail mcp` serve only the workspace's brain tools. */
+export const BRAINS_FLAG = '--brains';
+
+/** Whether a user-scope `trail` entry is the brains-only server (`trail mcp --brains`). */
+export function isBrainsServer(entry: unknown): boolean {
+  const args = (entry as { args?: unknown } | null)?.args;
+  return Array.isArray(args) && args.includes(BRAINS_FLAG);
+}
+
+/**
+ * Once this machine is connected to a Trail workspace, Claude Code gets one
+ * `trail` entry at the user MCP scope (`~/.claude.json`, every project): a
+ * server that serves only the workspace's brain tools. trail gives Claude
+ * Code no repo-tools server (its hooks and the `trail` command do that work),
+ * so this one lists the four brain tools and nothing else. Best-effort.
+ */
+export function installBrainsServer(home: string): GlobalWrite {
+  const id = 'claude-global-brains';
+  const path = join(home, '.claude.json');
+  try {
+    const { command, args } = serverEntry({ brand: 'trail' });
+    return mergeJsonKey(id, path, 'mcpServers', { command, args: [...args, BRAINS_FLAG] }, 'trail');
+  } catch {
+    return { id, path, action: 'skipped-unparseable' };
+  }
+}
+
+/** Take the brains server out again (`trail logout`). Leaves any other `trail` entry alone. */
+export function removeBrainsServer(home: string): GlobalWrite {
+  return dropUserServer('claude-global-brains', join(home, '.claude.json'), 'trail', (e) => !isBrainsServer(e));
 }

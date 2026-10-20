@@ -42,6 +42,12 @@ export interface Cloud {
   /** Repo keys in the workspace (`github.com/owner/name`), as of the last look. */
   repos: string[];
   linkedAt: number;
+  /**
+   * `connect`: connected by `trail init --connect <code>` from the onboarding
+   * on the web. Such a machine sends a repo summary (titles, counts, names)
+   * and never the full learnings sync, so it's never asked to add repos.
+   */
+  via?: "connect";
 }
 
 function cloudPath(env: NodeJS.ProcessEnv = process.env): string {

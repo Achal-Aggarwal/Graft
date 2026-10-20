@@ -89,9 +89,14 @@ function statePath(repo: string): string {
   return join(cacheDir(repo), "trail-workspace-sync.json");
 }
 
-/** Whether the repo at `checkout` is one of the workspace's. */
+/**
+ * Whether the repo at `checkout` is one of the workspace's, so its learnings
+ * and uses go up. Never on a machine connected by `trail init --connect`: that
+ * one sends a repo summary only (titles and counts, no learning bodies, no
+ * searches), whatever repos the workspace lists.
+ */
 export function inWorkspace(checkout: string, cloud: Cloud | null = readCloud()): boolean {
-  return !!cloud && cloud.repos.includes(repoPlace(checkout).key);
+  return !!cloud && cloud.via !== "connect" && cloud.repos.includes(repoPlace(checkout).key);
 }
 
 /**
@@ -149,7 +154,7 @@ function sendable(e: ActivityEvent, cloud: Cloud): boolean {
  * connected, or another repo, and nothing is written. Never throws.
  */
 export function recordActivity(e: ActivityEvent, cloud: Cloud | null = readCloud()): void {
-  if (!cloud || !cloud.repos.includes(e.repo)) return;
+  if (!cloud || cloud.via === "connect" || !cloud.repos.includes(e.repo)) return;
   try {
     const p = outboxPath();
     appendFileSync(p, `${JSON.stringify(e)}\n`);
