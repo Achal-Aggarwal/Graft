@@ -312,6 +312,38 @@ export function notProductCode(path: string): boolean {
   return NOT_PRODUCT_DIR.test(p) || NOT_PRODUCT_FILE.test(p);
 }
 
+/** Docs and config: prose, data and settings files, and the folders that hold them. */
+const DOC_OR_CONFIG_FILE = new RegExp(
+  [
+    "\\.(md|mdx|markdown|rst|adoc|txt|json|jsonc|ya?ml|toml|ini|cfg|conf|env|lock|xml|csv|svg|png|jpe?g|gif|ico)$",
+    "(^|/)(readme|changelog|changes|history|license|licence|notice|authors|contributors|codeowners|security)$",
+    "(^|/)(makefile|dockerfile|procfile|go\\.mod|go\\.sum)$",
+    // Dotfiles: .gitignore, .eslintrc.js, .env.local.
+    "(^|/)\\.[^/]+$",
+  ].join("|"),
+  "i",
+);
+const DOC_OR_CONFIG_DIR = /(^|\/)(docs?|\.github|\.circleci|\.vscode|\.idea)\//i;
+
+/** Whether a repo path is docs or config rather than code. */
+export function docOrConfig(path: string): boolean {
+  const p = path.split("\\").join("/");
+  return DOC_OR_CONFIG_DIR.test(p) || DOC_OR_CONFIG_FILE.test(p);
+}
+
+/**
+ * A teammate's files with the one worth naming first: product code (by the
+ * same rules as the tokens lookup), then other code (tests, fixtures,
+ * vendored, generated), then docs and config. Every file stays; only the
+ * order changes, and within each kind it's git's. The page says a teammate
+ * "is changing" the first one, which shouldn't be CHANGELOG.md when they
+ * also change client.go.
+ */
+export function headlineOrder(files: string[]): string[] {
+  const rank = (f: string) => (docOrConfig(f) ? 2 : notProductCode(f) ? 1 : 0);
+  return files.map((f, i) => ({ f, i, r: rank(f) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.f);
+}
+
 /**
  * One real lookup on the code map, as an agent would make it: a question
  * about the repo's most central symbol (most incoming edges) outside tests,
@@ -533,7 +565,7 @@ export function teammatesFromGit(
       const [name = "", email = ""] = (git(repo, ["log", "-1", "--format=%aN%x09%aE", b.ref]) ?? "").trim().split("\t");
       if (!name || BOT.test(name)) continue;
       if ((me && email.toLowerCase() === me) || (myName && name.toLowerCase() === myName)) continue;
-      const files = b.files.filter((f) => !ownPath(f) && where.has(f));
+      const files = headlineOrder(b.files.filter((f) => !ownPath(f) && where.has(f)));
       if (files.length === 0) continue;
       const commits = Number((git(repo, ["rev-list", "--count", `${cache.base}..${b.ref}`]) ?? "").trim());
       const conflict = conflictLine(repo, cache.base, b.ref, files, opts.learnings ?? []);

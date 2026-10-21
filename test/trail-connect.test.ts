@@ -17,6 +17,8 @@ import {
   claimConnectCode,
   conflictLine,
   connectAgain,
+  docOrConfig,
+  headlineOrder,
   notProductCode,
   offlineLine,
   learningTerms,
@@ -377,6 +379,35 @@ test("a conflict needs the branch to change a name the learning is about, not ju
   assert.equal(conflictLine(me, "origin/main", "origin/priya/jitter", ["client.go"], [rule]), undefined, "same file, different code");
   assert.equal(conflictLine(me, "origin/main", "origin/kumar/retry", ["client.go"], [{ ...rule, title: "Keep the retry count low", body: "## Decided\n- Keep it low." }]), undefined, "a learning naming nothing code-like");
   assert.deepEqual(learningTerms({ ...rule, title: "x", body: "", touches: ["client.go#Client.Do"] }), ["Do"]);
+});
+
+test("docs and config are told apart from code", () => {
+  for (const p of ["CHANGELOG.md", "README", "docs/setup.ts", "package.json", "go.mod", "go.sum", ".github/workflows/ci.yml", ".gitignore", ".eslintrc.js", "config/app.yaml", "Cargo.lock", "LICENSE", "Makefile", "Dockerfile", "assets/logo.svg"])
+    assert.ok(docOrConfig(p), p);
+  for (const p of ["client.go", "src/history.ts", "pkg/security/scan.go", "src/config.ts", "src/readme_parser.py", "cmd/docker.go"]) assert.ok(!docOrConfig(p), p);
+});
+
+test("a teammate's files lead with product code, then other code, then docs and config, and none is dropped", () => {
+  const files = ["CHANGELOG.md", "client_test.go", "client.go", "package.json", "backoff.go", "test/helpers.ts"];
+  assert.deepEqual(headlineOrder(files), ["client.go", "backoff.go", "client_test.go", "test/helpers.ts", "CHANGELOG.md", "package.json"]);
+  assert.deepEqual(headlineOrder(["CHANGELOG.md", "README.md"]), ["CHANGELOG.md", "README.md"], "docs only: docs it is, in git's order");
+  assert.deepEqual(headlineOrder([]), []);
+});
+
+test("the file a teammate is shown changing is their code, not CHANGELOG.md, unless docs are all they touched", () => {
+  const { clone } = team();
+  const me = clone("rushabh", "Rushabh Nagda");
+  const kumar = clone("kumar", "Kumar S");
+  const priya = clone("priya", "Priya R");
+  pushBranch(me, "rushabh/notes", { "client.go": "package retry\n\n// mine\nconst defaultRetryMax = 4\n", "CHANGELOG.md": "# Changes\n- mine\n" }, "Mine");
+  git(me, "checkout", "-q", "main");
+  // git lists CHANGELOG.md before client.go: capitals sort first.
+  pushBranch(kumar, "kumar/retry", { "CHANGELOG.md": "# Changes\n- retry 10\n", "client.go": "package retry\n\nconst defaultRetryMax = 10\n" }, "Raise defaultRetryMax to 10");
+  pushBranch(priya, "priya/changelog", { "CHANGELOG.md": "# Changes\n- tidy\n" }, "Tidy the changelog");
+  git(me, "fetch", "-q", "origin");
+  const got = teammatesFromGit(me);
+  assert.deepEqual(got.find((t) => t.branch === "kumar/retry")?.files, ["client.go", "CHANGELOG.md"]);
+  assert.deepEqual(got.find((t) => t.branch === "priya/changelog")?.files, ["CHANGELOG.md"]);
 });
 
 /* a connection made by --connect ------------------------------------------- */
