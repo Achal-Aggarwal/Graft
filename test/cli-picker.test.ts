@@ -27,7 +27,11 @@ import {
   type PickerKey,
   keptLearnings,
   learningsPickerState,
+  displayWidth,
+  drivePicker,
+  renderedRows,
 } from '../src/cli-picker.js';
+import { EventEmitter } from 'node:events';
 
 function fresh(): string { return mkdtempSync(join(tmpdir(), 'graft-picker-')); }
 
@@ -367,4 +371,86 @@ test('a learning from PR reviews says how many PRs flagged it, in the same list 
   const shown = renderPicker(state, false, { title: 'keep:' });
   assert.match(shown, /\[x\] Use pnpm, not npm\s+for your team · told Claude in 6 sessions/);
   assert.match(shown, /\[x\] Return a 500 when db\.query fails\s+for your team · flagged in review on 3 PRs/);
+});
+
+/**
+ * Just enough of a terminal to watch a redraw: `columns` wide, lines wrap
+ * (with xterm's deferred wrap at the last column), `\n` starts a new row,
+ * `ESC[nA` moves up, `ESC[0J` clears to the end of the screen, colours are
+ * ignored. `screen()` is what a person would see.
+ */
+function terminal(columns: number) {
+  const rows: string[][] = [[]];
+  let row = 0;
+  let col = 0;
+  const at = (r: number) => (rows[r] ??= []);
+  return {
+    columns,
+    write(s: string) {
+      for (let i = 0; i < s.length; ) {
+        const csi = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(s.slice(i));
+        if (csi) {
+          const n = Number(csi[1] || '1');
+          if (csi[2] === 'A') { row = Math.max(0, row - n); col = Math.min(col, columns - 1); }
+          if (csi[2] === 'J') { at(row).length = Math.min(at(row).length, col); rows.length = row + 1; }
+          i += csi[0].length;
+          continue;
+        }
+        const ch = String.fromCodePoint(s.codePointAt(i)!);
+        i += ch.length;
+        if (ch === '\n') { row++; col = 0; at(row); continue; }
+        const w = displayWidth(ch);
+        if (col + w > columns) { row++; col = 0; }
+        at(row)[col] = ch;
+        if (w === 2) at(row)[col + 1] = '';
+        col += w;
+      }
+      return true;
+    },
+    screen(): string[] {
+      return rows.map((r) => Array.from(r, (c) => c ?? ' ').join('').trimEnd());
+    },
+  };
+}
+
+function fakeStdin() {
+  return Object.assign(new EventEmitter(), {
+    isRaw: false,
+    setRawMode(raw: boolean) { this.isRaw = raw; },
+    resume() {},
+    pause() {},
+  });
+}
+
+test('renderedRows counts the rows a wrapped line takes, not just the lines', () => {
+  assert.equal(renderedRows('a\nb', 80), 2);
+  assert.equal(renderedRows('x'.repeat(80), 80), 1, 'exactly the width is one row');
+  assert.equal(renderedRows('x'.repeat(81), 80), 2);
+  assert.equal(renderedRows(`\x1b[2m${'x'.repeat(80)}\x1b[0m`, 80), 1, 'colour codes take no room');
+  assert.equal(renderedRows('', 80), 1);
+  assert.equal(renderedRows('漢'.repeat(41), 80), 2, 'wide characters take two columns');
+});
+
+test('in an 80-column terminal, redrawing the picker over a wrapped line leaves no copy of its title behind', async () => {
+  const repo = fresh(); const home = fresh(); // nothing installed: the "+ N not detected (…)" line is long
+  const state = initialPickerState(planInit(repo, { home }), repo, home);
+  const text = renderPicker(state, true);
+  assert.ok(text.split('\n').some((l) => displayWidth(l) > 80), 'a line wider than 80 columns, so it wraps');
+
+  const term = terminal(80);
+  term.write('$ graft init\n');
+  const stdin = fakeStdin();
+  const picked = drivePicker(state, undefined, { out: term, stdin });
+  const titles = () => term.screen().filter((l) => l.includes('pick the agents your team uses')).length;
+  assert.equal(titles(), 1);
+  for (const key of ['\x1b[B', '\x1b[B', '\x1b[A', 'm', 'm', ' ']) {
+    stdin.emit('data', Buffer.from(key));
+    assert.equal(titles(), 1, `one title after ${JSON.stringify(key)}`);
+    assert.equal(term.screen()[0], '$ graft init', 'what was above the picker stays');
+  }
+  stdin.emit('data', Buffer.from('\r'));
+  assert.ok(await picked);
+  // Done, the picker erases itself completely.
+  assert.equal(titles(), 0);
+  assert.deepEqual(term.screen().filter(Boolean), ['$ graft init']);
 });
