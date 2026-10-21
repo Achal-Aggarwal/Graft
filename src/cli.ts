@@ -61,6 +61,7 @@ import { costLabel, listNotes, noteName, notePlace, noteTargets, readingTokens, 
 import { aboutTerms, currentSessionCost } from "./notes/session-cost.js";
 import { beginPastRead, finishPastRead, type Finding } from "./notes/cold-start.js";
 import { beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/pr-reviews.js";
+import { finishPair, PairRun, validPairCode } from "./cloud/pair.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
 import { confirm, fold, getSkill, learn, listSkills, publish, skillForAgent, skillName, skillStatus, type LearnResult } from "./skills/skills.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
@@ -363,6 +364,15 @@ program
   .description("internal: wait for a sign-in through the link trail handed the agent, then connect the workspace")
   .action(async () => {
     await waitForConnect();
+  });
+
+program
+  .command("_trail-pair", { hidden: true })
+  .description("internal: after `init --pair`, wait for the connect and the review in the browser, then upload the repo's learnings")
+  .argument("<state>")
+  .argument("<dir>")
+  .action(async (state: string, dir: string) => {
+    await finishPair(state, resolve(dir));
   });
 
 program
@@ -1318,7 +1328,8 @@ grouped(program.command("init"), GROUP.setup)
     "--connect <code>",
     "connect this machine to your Trail workspace with the one-time code from app.trailhq.com, and send it a summary of this repo (titles, counts and names; never code)",
   )
-  .option("--server <url>", "with --connect: the Trail to connect to, e.g. https://dev.trailhq.com or http://localhost:5173 (default: TRAIL_URL, else https://app.trailhq.com)")
+  .option("--pair <code>", "the pair code from Trail's onboarding page: that page shows this run live, then you review what it found")
+  .option("--server <url>", "the Trail that gave the code (default: Trail cloud)")
   .action(async (dir: string, opts: InitOptions) => {
     if (opts.connect !== undefined) await runConnectInit(dir, opts);
     else await runInitCommand(dir, opts);
@@ -1446,7 +1457,7 @@ function printLines(lines: string[]): void {
 }
 
 /** `graft init`'s flags, as commander hands them over. */
-interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean; connect?: string; server?: string }
+interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean; connect?: string; pair?: string; server?: string }
 
 /** What `init --connect` hears from a run of init, as it happens: the stages the web page ticks off. */
 interface InitProgress {
@@ -1460,6 +1471,9 @@ function shown(repo: string, path: string): string {
   return relative(repo, path).split("\\").join("/");
 }
 
+/** Agents init knows by another id: both read AGENTS.md. */
+const AGENT_ALIASES: Record<string, string> = { codex: "agents", opencode: "agents" };
+
 /** `graft init`. */
 async function runInitCommand(dir: string, opts: InitOptions, progress?: InitProgress): Promise<{ ids: string[] } | null> {
     if (opts.listAgents) {
@@ -1467,7 +1481,10 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       return null;
     }
     const repo = resolve(dir);
-    const explicit = Array.isArray(opts.agents) ? opts.agents : undefined;
+    // Codex and OpenCode read AGENTS.md: `--agents codex` means that wiring.
+    // The name as given is kept for Trail's onboarding page.
+    const asked = Array.isArray(opts.agents) ? opts.agents : undefined;
+    const explicit = asked ? [...new Set(asked.map((id) => AGENT_ALIASES[id] ?? id))] : undefined;
 
     // Checked before anything is written: run from the home folder, init wired
     // it, mapped every code file under it, then said to commit.
@@ -1550,6 +1567,33 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       return null;
     }
 
+    // With --pair, Trail's onboarding page is waiting on this run: tell it
+    // first, so the person can sign up while the rest of init runs.
+    let pair: PairRun | null = null;
+    if (opts.pair !== undefined) {
+      const server = opts.server?.trim().replace(/\/+$/, "");
+      if (server) {
+        if (!/^https?:\/\//.test(server)) {
+          console.error("✗ --server takes a URL, like https://trail.acme.internal");
+          process.exitCode = 1;
+          return null;
+        }
+        process.env.TRAIL_URL = server;
+      }
+      if (!validPairCode(opts.pair)) {
+        console.error(`✗ --pair takes the code from Trail's onboarding page, got "${opts.pair}"`);
+        process.exitCode = 1;
+        return null;
+      }
+      const started = await PairRun.start(repo, opts.pair, { agent: asked?.[0] ?? ids[0]!, version: currentVersion });
+      if ("error" in started) {
+        console.error(`⚠ couldn't tell Trail about this run (${started.error}); setting up here anyway`);
+      } else {
+        pair = started;
+        console.error(`· Trail's page is following along · ${started.url}`);
+      }
+    }
+
     const wantClaude = ids.includes("claude");
     const cliPath = fileURLToPath(import.meta.url);
 
@@ -1575,6 +1619,12 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     if (pastRead) console.error(`· reading your ${pastRead.sessions} past Claude sessions here for what you keep telling Claude`);
     const reviewRead = TRAIL && wantClaude ? beginReviewRead(repo) : null;
     if (reviewRead) console.error("· reading review comments on this repo's merged PRs for what reviewers keep flagging");
+    if (pair) {
+      if (pastRead) pair.phase("decisions", "running", "", `Reading ${pastRead.sessions} past Claude sessions`);
+      else pair.phase("decisions", "done", "none here");
+      if (reviewRead) pair.phase("prs", "running", "", "Reading review comments on merged PRs");
+      else pair.phase("prs", "done", "none here");
+    }
 
     if (children.length)
       console.error(`· workspace: wiring ${repo} and ${children.length} child repo(s) — ${children.join(", ")}`);
@@ -1592,7 +1642,12 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // the workspace build, so it covers every child.
     let graphLine: string | null = null;
     if (!verbose) {
+      pair?.phase("files", "running", "", "Mapping the code");
       const res = await buildGraphWithProgress(repo, { build: opts.build, cliPath });
+      if (pair) {
+        const files = res.graph?.files;
+        pair.phase("files", "done", files ? `${files.toLocaleString("en-US")} files` : "", files ? `Mapped ${files.toLocaleString("en-US")} files` : "Mapped the code");
+      }
       for (const m of res.messages) console.error(m);
       const existing = res.built ? null : loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
       const fmt = (x: number) => x.toLocaleString("en-US");
@@ -1647,7 +1702,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       // sources, all ticked to start; a scripted run, or one with --yes, keeps
       // them all. Cancelling saves none, and the next init asks again.
       const picked =
-        process.stdin.isTTY && process.stderr.isTTY && !opts.yes && fromSessions.length + fromReviews.length
+        process.stdin.isTTY && process.stderr.isTTY && !opts.yes && !pair && fromSessions.length + fromReviews.length
           ? await pickLearnings([
               ...fromSessions.map((f) => ({ title: f.title, forTeam: f.for === "team", sessions: f.sessions.length })),
               ...fromReviews.map((f) => ({ title: f.title, forTeam: true, prs: f.prs.length })),
@@ -1667,6 +1722,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         sessionsRead = result.read ?? 0;
         saved.forEach((note, i) => learnedFrom.push({ note, sessions: kept[i]?.sessions.length }));
         const offered = result.findings.length;
+        pair?.phase("decisions", "done", `${result.read} sessions`, `Read ${result.read} past sessions: ${saved.length} thing${saved.length === 1 ? "" : "s"} you told Claude more than once`);
         if (saved.length) {
           const n = saved.length;
           const what = n < offered ? `kept ${n} of the ${offered} things` : `learned ${n} thing${n === 1 ? "" : "s"}`;
@@ -1689,6 +1745,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       if (reviewRead) {
         const { result, saved, kept, cancelled } = await finishReviewRead(repo, reviewRead, keepFrom<ReviewFinding>(fromSessions.length));
         const offered = result.findings.length;
+        pair?.phase("prs", "done", `${result.prs} PRs`, `Read ${result.prs} merged PRs: ${saved.length} thing${saved.length === 1 ? "" : "s"} reviewers flagged more than once`);
         if (saved.length) {
           const n = saved.length;
           const what = n < offered ? `kept ${n} of the ${offered} things` : `learned ${n} thing${n === 1 ? "" : "s"}`;
@@ -1768,6 +1825,15 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
           edges: graphs.reduce((n, g) => n + g.meta.edgeCount, 0),
         }),
     );
+    // Hand what was found to the review page, and leave a child waiting for
+    // the person to connect and review there.
+    if (pair) {
+      await pair.finish(repo);
+      pair.handOff(repo);
+      console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);
+      if (!process.stdout.isTTY) console.error(`[trail] Tell the user, in one line: their Trail page has moved on; review what Trail found there. If it isn't open, the link is ${pair.url}`);
+    }
+
     // Sorted so `claude,cursor` and `cursor,claude` aggregate as one value.
     track(
       "init_completed",

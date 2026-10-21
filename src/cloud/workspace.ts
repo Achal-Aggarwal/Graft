@@ -155,11 +155,24 @@ export interface HandoffRepo {
  */
 export async function registerHandoff(
   base: string,
-  req: { state: string; repo: { key: string; name: string } | null; repos: HandoffRepo[]; author: string },
+  req: { state: string; repo: { key: string; name: string } | null; repos: HandoffRepo[]; author: string; pair?: string },
   fetchImpl?: Fetch,
 ): Promise<{ url: string } | ApiError> {
   const r = await call<{ url: string }>(base, "POST", "/api/cli/handoffs", req, { fetchImpl });
   return isError(r) ? r : r.body;
+}
+
+/**
+ * Report how a `trail init --pair` run is going, for the onboarding page that
+ * shows it live. "reviewed" once the person has kept or dropped what it found
+ * (Trail takes no more), "gone" when the link expired or Trail doesn't know it.
+ */
+export async function postHandoffProgress(base: string, body: { state: string } & Record<string, unknown>, fetchImpl?: Fetch): Promise<"ok" | "reviewed" | "gone" | "error"> {
+  const r = await call(base, "POST", "/api/cli/handoffs/progress", body, { fetchImpl, timeoutMs: 15_000 });
+  if (!isError(r)) return "ok";
+  if (r.status === 409) return "reviewed";
+  if (r.status === 404 || r.status === 410) return "gone";
+  return "error";
 }
 
 export type ClaimResult =
