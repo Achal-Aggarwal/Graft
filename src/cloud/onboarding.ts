@@ -30,7 +30,7 @@ import { cleanSubject } from "../notes/edit-overlap.js";
 import { changedFiles, ownPath } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
 import { listNotes, sectionLead, type Note } from "../notes/notes.js";
-import { isError, trailUrl, type ApiError, type Cloud } from "./workspace.js";
+import { DEFAULT_TRAIL_URL, isError, trailUrl, type ApiError, type Cloud } from "./workspace.js";
 
 type Fetch = typeof fetch;
 
@@ -142,14 +142,15 @@ export async function claimConnectCode(
 ): Promise<ConnectResult> {
   const r = await post<ConnectBody>(`${base}/api/public/cli/connect`, { code, machine: req.machine, repo: req.repo }, { fetchImpl: opts.fetchImpl, timeoutMs: 15_000 });
   if (isError(r)) {
-    if (r.status === undefined || r.status >= 500) return { error: r.error, reason: "offline" };
+    if (r.status === undefined) return { error: r.error, reason: "offline" };
+    if (r.status >= 500) return { error: `Trail answered ${r.status}`, reason: "offline" };
     if (r.status === 403) return { error: "the account that made this code is no longer in that workspace", reason: "invalid" };
     if (r.status === 429) return { error: "too many tries just now; wait a minute and run it again", reason: "invalid" };
     return { error: "that code was already used, has expired, or isn't right", reason: "invalid" };
   }
   const b = r.body;
   const ws = b?.workspace;
-  if (!b?.token || !ws?.name) return { error: "Trail's answer had no workspace in it", reason: "offline" };
+  if (!b?.token || !ws?.name) return { error: "Trail sent an answer with no workspace in it", reason: "offline" };
   const id = ws.id ?? ws.slug ?? ws.name;
   return {
     cloud: {
@@ -169,6 +170,26 @@ export async function claimConnectCode(
       via: "connect",
     },
   };
+}
+
+/**
+ * The command that connects later: `trail init --connect TRL-… --server <url>`,
+ * naming the Trail it was run against unless that's Trail cloud, so it
+ * reaches the same backend the code came from.
+ */
+export function connectAgain(command: string, code: string, base: string): string {
+  return `${command} --connect ${code}${base.replace(/\/+$/, "") === DEFAULT_TRAIL_URL ? "" : ` --server ${base}`}`;
+}
+
+/**
+ * What to say, once, when Trail didn't take the code because it couldn't be
+ * reached: which Trail, what happened, and the exact command to connect later.
+ * `· couldn't reach Trail at http://localhost:5173 · set this repo up anyway ·
+ * to connect it later: trail init --connect TRL-7F2A-K9QD --server http://localhost:5173`
+ */
+export function offlineLine(error: string, base: string, code: string, command: string): string {
+  const what = error.startsWith("Trail ") ? `Trail at ${base}${error.slice("Trail".length)}` : `couldn't reach Trail at ${base}`;
+  return `· ${what} · set this repo up anyway · to connect it later: ${connectAgain(command, code, base)}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -280,9 +301,21 @@ export function parseAskSavings(text: string): Omit<TokensSummary, "question" | 
   return { saved: n(m[1]!), pct: n(m[2]!), pack: n(m[3]!), files: n(m[4]!), baseline: n(m[5]!) };
 }
 
+/** Folders that hold tests, fixtures, vendored or generated code, anywhere in a path. */
+const NOT_PRODUCT_DIR = /(^|\/)(test|tests|__tests__|testdata|test-fixtures|fixtures|__fixtures__|__mocks__|vendor|third_party|node_modules|generated|__generated__|gen)\//i;
+/** File names of tests and generated code: `client_test.go`, `a.test.ts`, `a.spec.js`, `test_client.py`, `api.pb.go`, `schema.generated.ts`. */
+const NOT_PRODUCT_FILE = /(_test\.[^/]+|\.(test|spec)\.[^/]+|_spec\.[^/]+|(^|\/)test_[^/]+\.py|(^|\/)conftest\.py|\.(generated|gen)\.[^/]+|\.pb\.go|_pb2(_grpc)?\.py|\.d\.ts)$/i;
+
+/** Whether a repo path is test, fixture, vendored or generated code, which a lookup shouldn't be measured on. */
+export function notProductCode(path: string): boolean {
+  const p = path.split("\\").join("/");
+  return NOT_PRODUCT_DIR.test(p) || NOT_PRODUCT_FILE.test(p);
+}
+
 /**
  * One real lookup on the code map, as an agent would make it: a question
- * about the repo's most central symbol (most incoming edges), answered with
+ * about the repo's most central symbol (most incoming edges) outside tests,
+ * fixtures, vendored and generated code, answered with
  * the code inlined, and what that saved against reading the files it covers
  * whole. The next most central is tried when a lookup saves nothing (tiny
  * files). Null without a graph.
@@ -291,7 +324,11 @@ export function tokensOnOneLookup(repo: string, opts: { contextDir?: string; tri
   try {
     const graph = loadGraphCached(contextDirFor(repo, opts.contextDir));
     if (!graph) return null;
-    const hubs = buildRepoMap(graph, { hotspots: Math.max(1, opts.tries ?? 5) }).hotspots;
+    // The most central symbols of the product code: tests, fixtures, vendored
+    // and generated code only when there's nothing else.
+    const all = buildRepoMap(graph, { hotspots: 500 }).hotspots;
+    const product = all.filter((h) => !notProductCode(h.path));
+    const hubs = (product.length ? product : all).slice(0, Math.max(1, opts.tries ?? 5));
     for (const hub of hubs) {
       const query = `how does ${hub.name} work`;
       const r = ask(repo, query, { source: true, limit: 5, contextDir: opts.contextDir });

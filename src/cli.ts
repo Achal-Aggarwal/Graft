@@ -67,6 +67,8 @@ import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from 
 import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, trailUrl, writeCloud, type Cloud } from "./cloud/workspace.js";
 import {
   claimConnectCode,
+  connectAgain,
+  offlineLine,
   learningsSummary,
   machineName,
   normalizeCode,
@@ -1823,7 +1825,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
     process.exitCode = 1;
     return;
   } else {
-    console.error(`· couldn't reach Trail (${got.error}) · setting up this repo anyway; run ${cmd("graft init")} --connect ${code} again to connect`);
+    console.error(offlineLine(got.error, base, code, cmd("graft init")));
   }
   const reporter = cloud ? new OnboardingReporter(cloud, ref, { machine }) : null;
   void reporter?.stage("connected");
@@ -1870,7 +1872,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
     console.error(`✓ sent ${cloud.workspace.name} a summary: ${parts.join(", ")} · titles, counts and names only, no code`);
     console.error(`· see what Trail found: ${base}/welcome/code/found`);
   } else {
-    console.error(`· couldn't send the summary to Trail this time; ${cmd("graft init")} --connect works again with a new code`);
+    console.error(`· couldn't send the summary to Trail this time · with a new code from ${base}/welcome/code, ${connectAgain(cmd("graft init"), "<code>", base)} sends it again`);
   }
   if (brainsEntry?.action === "created" || brainsEntry?.action === "updated")
     console.error(`✓ Claude Code gets your workspace's brains in every project · restart it to pick them up`);

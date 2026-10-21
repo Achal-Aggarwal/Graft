@@ -186,9 +186,20 @@ test("offline, init still sets the repo up and says how to connect later", async
   const env = envFor("http://127.0.0.1:9");
   const r = await run(["init", repo, "--connect", GOOD_CODE, "--agents", "claude", "--no-global", "--no-build"], env);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /couldn't reach Trail .* setting up this repo anyway; run trail init --connect TRL-GOOD-C0DE again to connect/);
+  // Said once, naming the Trail it tried, with the exact command that reaches it again.
+  const said = r.stderr.split("\n").filter((l) => /reach Trail|Trail at /.test(l));
+  assert.deepEqual(said, [
+    "· couldn't reach Trail at http://127.0.0.1:9 · set this repo up anyway · to connect it later: trail init --connect TRL-GOOD-C0DE --server http://127.0.0.1:9",
+  ]);
+  assert.equal((r.stderr.match(/couldn't reach Trail/g) ?? []).length, 1);
   assert.ok(existsSync(join(repo, ".claude", "settings.json")));
   assert.equal(existsSync(join(env.TRAIL_HOME!, "cloud.json")), false);
+
+  // The same with --server: the hint carries the --server that was used.
+  const flagged = await run(["init", repo, "--connect", GOOD_CODE, "--server", "http://127.0.0.1:9/", "--agents", "claude", "--no-global", "--no-build"], { ...env, TRAIL_URL: "" });
+  assert.equal(flagged.status, 0, flagged.stderr);
+  assert.equal((flagged.stderr.match(/couldn't reach Trail/g) ?? []).length, 1);
+  assert.match(flagged.stderr, /to connect it later: trail init --connect TRL-GOOD-C0DE --server http:\/\/127\.0\.0\.1:9$/m);
 });
 
 test("without --connect, init sends nothing anywhere and prints what it always did", async () => {

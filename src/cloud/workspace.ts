@@ -18,7 +18,7 @@ import { trailHome } from "../notes/home.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 
 /** Trail's own front end and API. TRAIL_URL (or the older GRAFT_BRAIN_URL) moves it, for a local or self-hosted Trail. */
-const DEFAULT_TRAIL_URL = "https://app.trailhq.com";
+export const DEFAULT_TRAIL_URL = "https://app.trailhq.com";
 
 export function trailUrl(env: NodeJS.ProcessEnv = process.env): string {
   return (env.TRAIL_URL || env.GRAFT_BRAIN_URL || DEFAULT_TRAIL_URL).replace(/\/+$/, "");

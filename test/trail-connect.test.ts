@@ -16,6 +16,9 @@ import { buildGraph } from "../src/graph/build.js";
 import {
   claimConnectCode,
   conflictLine,
+  connectAgain,
+  notProductCode,
+  offlineLine,
   learningTerms,
   learningsSummary,
   normalizeCode,
@@ -202,6 +205,57 @@ test("one real lookup on the fresh map: the most central symbol, and what readin
   // The same numbers the agent sees on that query.
   assert.deepEqual(parseAskSavings(formatAsk(ask(dir, "how does retryDo work", { source: true, limit: 5 }))), { saved: t.saved, pct: t.pct, pack: t.pack, files: t.files, baseline: t.baseline });
   assert.equal(tokensOnOneLookup(mkdtempSync(join(tmpdir(), "connect-nograph-"))), null);
+});
+
+test("tests, fixtures, vendored and generated code are not product code", () => {
+  for (const p of [
+    "client_test.go", "pkg/retry/client_test.go", "src/a.test.ts", "src/a.spec.js", "lib/a_spec.rb", "tests/test_client.py", "test_client.py",
+    "test/helpers.ts", "tests/util.py", "src/__tests__/x.tsx", "testdata/in.go", "fixtures/repo.ts", "spec/fixtures/a.rb",
+    "vendor/github.com/x/y.go", "third_party/z.c", "generated/api.ts", "src/__generated__/schema.ts", "api/v1/api.pb.go",
+    "proto/api_pb2.py", "src/schema.generated.ts", "src\\__tests__\\win.ts",
+  ])
+    assert.ok(notProductCode(p), p);
+  for (const p of ["client.go", "src/cli.ts", "src/testing.ts", "src/latest.ts", "contest/score.py", "src/generator.ts", "attest/x.go", "src/test-utils-free.ts"])
+    assert.ok(!notProductCode(p), p);
+});
+
+test("the lookup is about product code: a test helper everyone calls is passed over, unless tests are all there is", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "connect-tokens-tests-"));
+  const filler = Array.from({ length: 300 }, (_, i) => `export function helper${i}(x: number): number {\n  return x * ${i} + ${i};\n}\n`).join("\n");
+  writeFileSync(join(dir, "client.ts"), `export function retryDo(attempts: number): number {\n  return attempts;\n}\n\n${filler}`);
+  writeFileSync(join(dir, "a.ts"), 'import { retryDo } from "./client";\nexport function useA() {\n  return retryDo(4);\n}\n');
+  mkdirSync(join(dir, "test"));
+  // tmpRepo has more callers than anything in the product code.
+  writeFileSync(join(dir, "test", "helpers.ts"), `export function tmpRepo(name: string): string {\n  return name;\n}\n\n${filler}`);
+  for (const f of ["a", "b", "c", "d", "e", "f", "g", "h"])
+    writeFileSync(join(dir, "test", `${f}.test.ts`), `import { tmpRepo } from "./helpers";\nexport function t${f}() {\n  return tmpRepo("x");\n}\n`);
+  await buildGraph(dir);
+  const { buildRepoMap } = await import("../src/graph/map.js");
+  const { loadGraphCached } = await import("../src/graph/load.js");
+  const { contextDirFor } = await import("../src/context/node-file.js");
+  assert.equal(buildRepoMap(loadGraphCached(contextDirFor(dir))!).hotspots[0]!.name, "tmpRepo", "the test helper is the most central symbol");
+  const t = tokensOnOneLookup(dir);
+  assert.ok(t);
+  assert.equal(t.symbol, "retryDo");
+  assert.equal(t.question, "how retryDo works");
+
+  const onlyTests = mkdtempSync(join(tmpdir(), "connect-tokens-onlytests-"));
+  mkdirSync(join(onlyTests, "test"));
+  writeFileSync(join(onlyTests, "test", "helpers.ts"), `export function tmpRepo(name: string): string {\n  return name;\n}\n\n${filler}`);
+  for (const f of ["a", "b", "c"]) writeFileSync(join(onlyTests, "test", `${f}.test.ts`), `import { tmpRepo } from "./helpers";\nexport function t${f}() {\n  return tmpRepo("x");\n}\n`);
+  await buildGraph(onlyTests);
+  assert.equal(tokensOnOneLookup(onlyTests)?.symbol, "tmpRepo", "nothing else to measure: a test helper it is");
+});
+
+test("the offline line names the Trail it tried once, and the command to connect later carries --server unless it's Trail cloud", () => {
+  assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://app.trailhq.com"), "trail init --connect TRL-7F2A-K9QD");
+  assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://dev.trailhq.com"), "trail init --connect TRL-7F2A-K9QD --server https://dev.trailhq.com");
+  assert.equal(
+    offlineLine("couldn't reach Trail", "http://localhost:5173", "TRL-7F2A-K9QD", "trail init"),
+    "· couldn't reach Trail at http://localhost:5173 · set this repo up anyway · to connect it later: trail init --connect TRL-7F2A-K9QD --server http://localhost:5173",
+  );
+  assert.match(offlineLine("Trail didn't answer in time", "https://dev.trailhq.com", "TRL-7F2A-K9QD", "trail init"), /^· Trail at https:\/\/dev\.trailhq\.com didn't answer in time · /);
+  assert.match(offlineLine("Trail answered 502", "https://app.trailhq.com", "TRL-7F2A-K9QD", "trail init"), /^· Trail at https:\/\/app\.trailhq\.com answered 502 · set this repo up anyway · to connect it later: trail init --connect TRL-7F2A-K9QD$/);
 });
 
 /* learnings ---------------------------------------------------------------- */
