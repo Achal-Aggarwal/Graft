@@ -48,7 +48,10 @@ async function withPath<T>(bin: string, fn: (env: NodeJS.ProcessEnv) => Promise<
   }
 }
 
-test("one call names the skills: only the job, steps, check and counts are sent, no typed line, no how-to, no secret", async () => {
+/** The stand-ins are shebang scripts on a ':'-joined PATH, which Windows can't run. */
+const posixOnly = { skip: process.platform === "win32" ? "shebang stand-ins" : false };
+
+test("one call names the skills: only the job, steps, check and counts are sent, no typed line, no how-to, no secret", posixOnly, async () => {
   const s = standIn({ findings: [{ id: "i-1f0e2a9c41", name: "publish-acme-cli", description: "Publish acme-cli to npm—then check it with npm view." }] });
   try {
     const r = await withPath(s.bin, (env) => nameItems([skillCandidate()], env));
@@ -79,7 +82,7 @@ test("no skill, no call: guardrails and preferences have their own titles", asyn
   }
 });
 
-test("bad names fall back to the plain name: taken, built in, too long, banned words, dashes, another item's id", async () => {
+test("bad names fall back to the plain name: taken, built in, too long, banned words, dashes, another item's id", posixOnly, async () => {
   const bad = ["notes-helper", "x", "release--npm", "release-", "a".repeat(41), "help", "Publish It", "release-npm", "[trail] ship"];
   for (const name of bad) assert.equal(validName(name, (n) => n === "release-npm"), false, name);
   assert.equal(validName("publish-acme-cli"), true);
@@ -95,7 +98,7 @@ test("bad names fall back to the plain name: taken, built in, too long, banned w
   }
 });
 
-test("signed out: no names, the reason, and the plain names stand (J03)", async () => {
+test("signed out: no names, the reason, and the plain names stand (J03)", posixOnly, async () => {
   const s = standIn(null, { fail: JSON.stringify({ is_error: true, result: "Failed to authenticate: OAuth session expired and could not be refreshed" }) });
   try {
     const r = await withPath(s.bin, (env) => nameItems([skillCandidate()], env));
