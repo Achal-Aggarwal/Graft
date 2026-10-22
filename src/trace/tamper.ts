@@ -48,7 +48,9 @@ interface Place { trail: string; projects: string; transcript: string | null }
 /** The protected places as written, and again with every symlink on the way resolved. */
 interface Zones { as: Place; real: Place; home: string }
 
-const under = (p: string, dir: string) => p === dir || p.startsWith(dir + sep);
+/** Windows paths ignore case: C:\Users\dev\.trail and c:\users\dev\.trail are one folder. */
+const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+const under = (p: string, dir: string) => { const a = fold(p), b = fold(dir); return a === b || a.startsWith(b + sep); };
 
 /** `p` with its deepest existing folder resolved through symlinks: where a write to `p` really lands. */
 function realOf(p: string): string {
@@ -83,7 +85,7 @@ function zonesOf(ctx: TamperCtx): Zones {
 }
 
 function guardedIn(p: string, z: Place, wipe: boolean): boolean {
-  if (under(p, z.trail) || (z.transcript !== null && p === z.transcript)) return true;
+  if (under(p, z.trail) || (z.transcript !== null && fold(p) === fold(z.transcript))) return true;
   if (wipe && (under(z.trail, p) || under(z.projects, p))) return true;
   if (!under(p, z.projects)) return false;
   return relative(z.projects, p).split(sep)[1] !== 'memory';
@@ -298,7 +300,8 @@ function simpleWrites(w: string[], folder: string | null, z: Zones, vars?: Vars)
 /** A `cd` from `folder`; null when only the shell could know where it lands. */
 function cdFrom(folder: string | null, simple: string, home: string): string | null {
   const next = effectiveFolder(folder ?? '/\0', simple, home);
-  return next && !next.startsWith('/\0') ? next : null;
+  // No real path holds a NUL; on Windows resolve() puts a drive before the '/\0' this starts from.
+  return next && !next.includes('\0') ? next : null;
 }
 
 /** Whether a Bash command writes a guarded path; `depth` bounds `bash -c` inside `bash -c`. */

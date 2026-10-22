@@ -278,6 +278,7 @@ test("never through a link: a linked state folder is not written; a FIFO at valu
   noteValue(SHOP, { guardrailStops: 3 }, b.env, NOW);
   assert.equal(markValueSaid(SHOP, b.env, NOW), false);
   assert.equal(existsSync(join(elsewhere, "value.json")), false);
+  if (process.platform === "win32") return; // Windows has no FIFO
   const c = box("fifo");
   mkdirSync(join(c.trail, "state"), { recursive: true });
   execFileSync("mkfifo", [valuePath(c.env)]);

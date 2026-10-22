@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { codexExitOf, codexLineEvents, noteCodexPrompt, readNewCodexEvents } from "../src/trace/codex.js";
 import { tamperOf } from "../src/trace/tamper.js";
 import type { SkillSessionState } from "../src/trace/types.js";
@@ -82,10 +82,11 @@ test("review: apply_patch run through the shell is an edit of each file it names
   const argv = decode([F.turnContext("/home/dev/shop"), F.fnCall("p2", "shell", { command: ["apply_patch", patch], workdir: "/home/dev/shop" })]);
   for (const evs of [heredoc, argv]) {
     const edits = evs.flatMap((e) => (e.kind === "tool_call" && e.name === "Edit" ? [(e.input as { file_path: string }).file_path] : []));
-    assert.deepEqual(edits, ["/home/dev/.trail/skills/release/SKILL.md", "/home/dev/shop/notes.txt"], JSON.stringify(evs));
+    // A relative name is resolved against the cwd (on Windows that gives a drive and '\\').
+    assert.deepEqual(edits, ["/home/dev/.trail/skills/release/SKILL.md", resolve("/home/dev/shop/notes.txt")], JSON.stringify(evs));
     assert.ok(evs.some((e) => e.kind === "tool_call" && e.name === "Bash"), "the shell call is still the run's call");
     const hit = evs.flatMap((e) => (e.kind === "tool_call" ? [tamperOf(e.name, e.input, null, TAMPER)] : [])).find(Boolean);
-    assert.match(String(hit), /^Edit \/home\/dev\/\.trail\//);
+    assert.ok(String(hit).startsWith(`Edit ${resolve("/home/dev/.trail")}${sep}`), String(hit));
   }
 });
 

@@ -23,11 +23,12 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, constants, statSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { ParsedSkill } from './types.js';
 import { flatLine } from '../notes/flatten.js';
 import { readJsonSafe, trailPath, writePrivate } from '../util/private-fs.js';
 import { onlyTrailChanges } from './probe-clean.js';
+import { pathDirs, programFiles } from '../trace/guard-fast.js';
 
 export interface ProbeResult { probe: string; ok: boolean; why?: string; fix?: string }
 
@@ -126,15 +127,18 @@ function placed(token: string, checkout: string, env: NodeJS.ProcessEnv): string
   return checkout ? resolve(checkout, t) : null;
 }
 
+/** On PATH: an executable file of that name, or on Windows git.exe, npm.cmd and the like (PATHEXT; no exec bit there). */
 function which(name: string, env: NodeJS.ProcessEnv): boolean {
-  for (const dir of String(env.PATH ?? '').split(delimiter)) {
-    if (!dir) continue;
-    const p = join(dir, name);
-    if (!statOf(p)?.isFile()) continue;
-    try {
-      accessSync(p, constants.X_OK);
-      return true;
-    } catch { /* not executable: look further */ }
+  const names = programFiles(name, env);
+  for (const dir of pathDirs(env)) {
+    for (const n of names) {
+      const p = join(dir, n);
+      if (!statOf(p)?.isFile()) continue;
+      try {
+        accessSync(p, constants.X_OK);
+        return true;
+      } catch { /* not executable: look further */ }
+    }
   }
   return false;
 }

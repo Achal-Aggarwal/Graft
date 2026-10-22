@@ -15,6 +15,7 @@
  */
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { FoldResult } from '../trace/runs.js';
 import type { PreBashDecision } from '../claude/pre-bash.js';
 import type { CompiledSkill, Receipt } from './types.js';
@@ -261,7 +262,7 @@ function holdUnbacked(cmd: SkillsAddCmd, env: NodeJS.ProcessEnv, now: Date, why:
   const where = nameTaken(cmd.name, scope);
   if (where !== null && where !== 'held') return fail(`trail · not saved: the name ${cmd.name} is taken. Use another: trail skills add <other> --run ${flatLine(cmd.runId, 40)}`);
   const c = compileRun(sheet, {
-    repoRoot: root, home: env.HOME || '', platform: process.platform, now,
+    repoRoot: root, home: env.HOME || homedir(), platform: process.platform, now,
     readSheet: (id) => readRunSheet(id, env), name: cmd.name, moment: 'asked', applies: sheet.repoKey, taken: (n) => n !== cmd.name && nameTaken(n, scope) !== null,
   });
   if (!c.ok) return fail(`trail · not saved: ${refusalWords(c.reason, c.detail)}.`);
