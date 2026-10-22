@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpRepo } from "./helpers.js";
 import { FIXED_DIRS, SURE_FAIL_REASON, markDenied, sureFail } from "../src/trace/guard-fast.js";
 import { sessionPath } from "../src/trace/gate-file.js";
@@ -73,13 +73,14 @@ test("a planted guardrail file can only ever give the fixed reason: its title an
   assert.equal(sureFail("rm -rf build", b.env), null);
 });
 
-test("a FIFO planted as the guardrail file allows at once (capped child), not after the hook's 5 s", () => {
+test("a FIFO planted as the guardrail file allows at once (capped child), not after the hook's 5 s", { skip: process.platform === "win32" }, () => {
+  // Windows has no FIFO.
   const b = box();
   const path = join(everyRepoDir(b.env), "no-timeout.md");
   rmSync(path);
   spawnSync("mkfifo", [path]);
   const probe = `
-    const { sureFail } = await import(${JSON.stringify(join(SRC, "trace", "guard-fast.ts"))});
+    const { sureFail } = await import(${JSON.stringify(pathToFileURL(join(SRC, "trace", "guard-fast.ts")).href)});
     const t = performance.now();
     const r = sureFail('timeout 5 make', ${JSON.stringify(b.env)});
     process.stdout.write(JSON.stringify({ r, ms: performance.now() - t }));`;
@@ -107,14 +108,15 @@ test("the folders a hook's PATH can miss include nix-darwin's per-user profile (
   for (const d of ["/usr/bin", "/bin"]) assert.ok(!FIXED_DIRS.includes(d), d);
 });
 
-test("markDenied: a FIFO planted at the session's denied file is not opened for writing (capped child)", () => {
+test("markDenied: a FIFO planted at the session's denied file is not opened for writing (capped child)", { skip: process.platform === "win32" }, () => {
+  // Windows has no FIFO.
   const b = box();
   const sid = "5f0c2a1e-1b2c-4d5e-8f90-123456789abc";
   const path = sessionPath(sid, ".denied.jsonl", b.env);
   mkdirSync(dirname(path), { recursive: true });
   spawnSync("mkfifo", [path]);
   const probe = `
-    const { markDenied } = await import(${JSON.stringify(join(SRC, "trace", "guard-fast.ts"))});
+    const { markDenied } = await import(${JSON.stringify(pathToFileURL(join(SRC, "trace", "guard-fast.ts")).href)});
     const t = performance.now();
     markDenied(${JSON.stringify(sid)}, 'timeout 5 make', ${JSON.stringify(b.env)});
     process.stdout.write(JSON.stringify({ ms: performance.now() - t }));`;

@@ -63,9 +63,11 @@ export interface GateCtx {
 const set = (v: string | undefined) => typeof v === 'string' && v !== '' && v !== '0' && v.toLowerCase() !== 'false';
 
 function scratchFolder(cwd: string): boolean {
-  const p = resolve(cwd);
-  if (`${p}/`.includes('/scratchpad/')) return true;
-  const roots = [tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].map((r) => resolve(r));
+  // Windows paths ignore case (c:\ and C:\ are one folder) and resolve() gives them '\'.
+  const fold = (x: string) => (process.platform === 'win32' ? x.toLowerCase() : x);
+  const p = fold(resolve(cwd));
+  if (`${p}${sep}`.includes(`${sep}scratchpad${sep}`)) return true;
+  const roots = [tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].map((r) => fold(resolve(r)));
   return roots.some((r) => p === r || p.startsWith(r + sep));
 }
 

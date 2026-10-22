@@ -117,8 +117,8 @@ test("writeLesson / readLessons: a skill lesson round trips as skills/<name>/les
     "---", 'id: "ls-3c9e1a"', 'kind: "lesson"', 'skill: "release-npm"', 'src: "correction"', 'at: "2026-11-03"', "---",
     "push the tag too: git push origin v{version}", "",
   ].join("\n"));
-  assert.equal(statSync(p1).mode & 0o777, 0o600);
-  assert.equal(statSync(join(dir, "lessons")).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(p1).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(join(dir, "lessons")).mode & 0o777, 0o700);
   const p2 = writeLesson(lesson({ id: "zz", text: "never publish locally", kind: "guardrail" }), SHOP, h.env);
   assert.equal(p2, join(dir, "lessons", "2026-11-03-2.md"));
   const back = readLessons(dir);
@@ -176,7 +176,7 @@ test("writeLesson: a machine wall's lesson is an every-repo learning of kind les
   const git = writeLesson(lesson({ skill: null, text: "push over ssh: git push git@github.com:acme/shop.git", src: "repair", wall: "git-https-auth" }), SHOP, h.env);
   assert.equal(join(git, ".."), join(h.trail, "repos", "github.com", "acme", "shop", "notes"));
   assert.match(readFileSync(git, "utf8"), /^applies: github.com\/acme\/shop$/m);
-  assert.equal(statSync(git).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(git).mode & 0o777, 0o600);
   assert.throws(() => writeLesson(lesson({ skill: null, wall: "git-https-auth" }), "../../etc", h.env), /repo key/);
   assert.throws(() => writeLesson(lesson({ skill: null, wall: null }), SHOP, h.env), /skill or a wall/);
 });

@@ -8,6 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { tamperOf } from "../src/trace/tamper.js";
 
 const HOME = "/home/dev";
@@ -16,11 +17,11 @@ const bash = (cmd: string, folder: string | null = "/home/dev/shop") => tamperOf
 const edit = (tool: string, path: string) => tamperOf(tool, { file_path: path }, null, CTX);
 
 test("edit tools: Trail's home and transcripts are protected; Claude Code's memory files are not", () => {
-  assert.equal(edit("Write", "/home/dev/.trail/runs/r-1001-aaaa.json"), "Write /home/dev/.trail/runs/r-1001-aaaa.json");
-  assert.equal(edit("Edit", "~/.trail/settings.json"), "Edit /home/dev/.trail/settings.json");
-  assert.equal(edit("Edit", "/home/dev/.claude/projects/-home-dev-shop/5f0c.jsonl"), "Edit /home/dev/.claude/projects/-home-dev-shop/5f0c.jsonl");
-  assert.equal(edit("Write", "/home/dev/.claude/projects/-home-dev-shop/other-session.jsonl"), "Write /home/dev/.claude/projects/-home-dev-shop/other-session.jsonl");
-  assert.equal(tamperOf("NotebookEdit", { notebook_path: "/home/dev/.trail/x.ipynb" }, null, CTX), "NotebookEdit /home/dev/.trail/x.ipynb");
+  assert.equal(edit("Write", "/home/dev/.trail/runs/r-1001-aaaa.json"), `Write ${resolve("/home/dev/.trail/runs/r-1001-aaaa.json")}`);
+  assert.equal(edit("Edit", "~/.trail/settings.json"), `Edit ${resolve("/home/dev/.trail/settings.json")}`);
+  assert.equal(edit("Edit", "/home/dev/.claude/projects/-home-dev-shop/5f0c.jsonl"), `Edit ${resolve("/home/dev/.claude/projects/-home-dev-shop/5f0c.jsonl")}`);
+  assert.equal(edit("Write", "/home/dev/.claude/projects/-home-dev-shop/other-session.jsonl"), `Write ${resolve("/home/dev/.claude/projects/-home-dev-shop/other-session.jsonl")}`);
+  assert.equal(tamperOf("NotebookEdit", { notebook_path: "/home/dev/.trail/x.ipynb" }, null, CTX), `NotebookEdit ${resolve("/home/dev/.trail/x.ipynb")}`);
   assert.equal(edit("Write", "/home/dev/.claude/projects/-home-dev-shop/memory/deploy-notes.md"), null);
   assert.equal(edit("Edit", "/home/dev/.claude/projects/-home-dev-shop/memory/MEMORY.md"), null);
   assert.equal(edit("Write", "/home/dev/.trail-lab/x"), null);

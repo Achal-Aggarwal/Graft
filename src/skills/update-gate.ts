@@ -19,6 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, relative, isAbsolute, sep } from 'node:path';
 import type { PreBashDecision } from '../claude/pre-bash.js';
 import type { FoldResult } from '../trace/runs.js';
@@ -242,9 +243,9 @@ function updateInTranscript(r: UpdateReceipt, name: string, offerId: string, cal
   });
 }
 
-/** A path as the person reads it: `~/…` under their home. */
+/** A path as the person reads it: `~/…` under their home (Windows may set only USERPROFILE, which homedir() reads). */
 function shown(p: string, env: NodeJS.ProcessEnv): string {
-  const home = env.HOME;
+  const home = env.HOME || homedir();
   const rel = home && isAbsolute(p) ? relative(home, p) : '';
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel.split(sep).join('/')}` : p;
 }

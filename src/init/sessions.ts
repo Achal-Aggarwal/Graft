@@ -42,13 +42,16 @@ export type SkipWhy = "headless" | "ancestor-under-30" | "unreadable" | "too-old
  * reads one, unless the checkout itself is in one: then its own sessions are its own.
  */
 function scratch(cwd: string, top: string): boolean {
+  // Windows paths ignore case (c:\ and C:\ are one folder) and resolve() gives them '\'.
+  const fold = (x: string) => (process.platform === "win32" ? x.toLowerCase() : x);
+  const pad = (path: string) => `${fold(resolve(path))}${sep}`.includes(`${sep}scratchpad${sep}`);
   const isScratch = (path: string) => {
-    const p = resolve(path);
-    if (`${p}/`.includes("/scratchpad/")) return true;
-    const roots = [tmpdir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].map((r) => resolve(r));
+    const p = fold(resolve(path));
+    if (pad(path)) return true;
+    const roots = [tmpdir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].map((r) => fold(resolve(r)));
     return roots.some((r) => p === r || p.startsWith(r + sep));
   };
-  if (`${resolve(cwd)}/`.includes("/scratchpad/") && !`${resolve(top)}/`.includes("/scratchpad/")) return true;
+  if (pad(cwd) && !pad(top)) return true;
   return isScratch(cwd) && !isScratch(top);
 }
 

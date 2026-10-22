@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkedSuccess, freshRunId } from "../src/trace/runs.js";
 import { effectiveFolder } from "../src/trace/run-calls.js";
@@ -73,7 +73,7 @@ test("a task notice mid-run starts nothing; a subagent's lines in the parent tra
 
 test("cd chains: `cd -` back to where the call started is known; one with no cd before it in the call is not", () => {
   assert.equal(effectiveFolder("/home/dev/shop", "cd backend && cd - && npm test", "/home/dev"), "/home/dev/shop");
-  assert.equal(effectiveFolder("/home/dev/shop", "cd backend && cd ../web && cd - && go test ./...", "/home/dev"), "/home/dev/shop/backend");
+  assert.equal(effectiveFolder("/home/dev/shop", "cd backend && cd ../web && cd - && go test ./...", "/home/dev"), resolve("/home/dev/shop/backend"));
   assert.equal(effectiveFolder("/home/dev/shop", "cd - && npm test", "/home/dev"), null);
 });
 

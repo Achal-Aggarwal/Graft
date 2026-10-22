@@ -5,6 +5,7 @@
  * from saving after the agent wrote Trail's or the host's files.
  */
 import { test } from "node:test";
+import { resolve, sep } from "node:path";
 import assert from "node:assert/strict";
 import { foldKind, hostRefused, interpreterKind, runHelpers } from "../src/trace/run-calls.js";
 import { toolResult, toolUse } from "./trace-fixtures.js";
@@ -27,7 +28,9 @@ test("the folder follows the entry cwd across calls: a bare cd is plumbing, the 
 test("cd chains, a cd subshell, ~ and $HOME are followed; a folder only the shell knows is none", () => {
   const s = session("cds");
   const before = process.env.HOME;
+  const beforeProfile = process.env.USERPROFILE;
   process.env.HOME = "/home/dev"; // os.homedir() follows $HOME
+  process.env.USERPROFILE = "/home/dev"; // and on Windows, %USERPROFILE%
   try {
     s.fold([
       ask("run the integration tests", 0),
@@ -40,6 +43,8 @@ test("cd chains, a cd subshell, ~ and $HOME are followed; a folder only the shel
     ]);
   } finally {
     process.env.HOME = before;
+    if (beforeProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = beforeProfile;
   }
   const got = calls(s).map((c) => [c.key, c.cwd]);
   assert.deepEqual(got, [
@@ -243,14 +248,15 @@ test("tamper rules: writing Trail's files or the transcript marks the session fo
 
   const write = session("tamper-write");
   write.fold([ask("fix it", 0), toolUse("toolu_w", "Write", { file_path: "/home/dev/.trail/runs/r-1001-aaaa.json", content: "{}" }, { timestamp: at(1) })], ctx);
-  assert.equal(write.st.tampered, "Write /home/dev/.trail/runs/r-1001-aaaa.json");
+  assert.equal(write.st.tampered, `Write ${resolve("/home/dev/.trail/runs/r-1001-aaaa.json")}`);
   write.fold([...bash("echo x >> ~/.trail/offers.jsonl", "", { sec: 2 })], ctx);
-  assert.equal(write.st.tampered, "Write /home/dev/.trail/runs/r-1001-aaaa.json", "the first one stays");
+  assert.equal(write.st.tampered, `Write ${resolve("/home/dev/.trail/runs/r-1001-aaaa.json")}`, "the first one stays");
 
   const tx = session("tamper-tx");
   tx.fold([ask("fix it", 0), ...bash(`echo '{"type":"user"}' >> ${"PATH_PLACEHOLDER"}`, "", { sec: 1 })], ctx);
   assert.equal(tx.st.tampered, null, "a different file");
-  tx.fold([...bash(`echo '{"type":"user"}' >> ${tx.path}`, "", { sec: 2 })], ctx);
+  // A shell word's '\' is an escape: on Windows the agent writes the transcript's path with '/'.
+  tx.fold([...bash(`echo '{"type":"user"}' >> ${tx.path.split(sep).join("/")}`, "", { sec: 2 })], ctx);
   assert.equal(tx.st.tampered, "Bash echo");
 
   const proj = session("tamper-proj");
