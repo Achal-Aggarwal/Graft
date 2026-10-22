@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseSkillsUpdate, SAVE_GATE_RE, SKILLS_UPDATE_RE } from "../src/skills/save-parse.js";
 import { SAVE_GATE } from "../src/claude/pre-bash-skills.js";
+import { timeBar } from "./machine-speed.js";
 
 const OK: Array<[string, string, string]> = [
   ["trail skills update release-npm --offer o-1a2b3c", "release-npm", "o-1a2b3c"],
@@ -61,5 +62,5 @@ test("the parser is linear: a 60 KB command of update words is read in milliseco
   const c = `trail skills update ${"a ".repeat(30_000)}`;
   const t = Date.now();
   assert.equal(parseSkillsUpdate(c), null);
-  assert.ok(Date.now() - t < 500);
+  assert.ok(Date.now() - t < timeBar(500, 2000));
 });

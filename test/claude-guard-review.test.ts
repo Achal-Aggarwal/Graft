@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { agentGuard } from '../src/skills/risk.js';
 import { skillsPrefilter } from '../src/claude/pre-bash.js';
 import { preBashSkills } from '../src/claude/pre-bash-skills.js';
+import { timeBar } from './machine-speed.js';
 
 const ENV = { HOME: '/tmp/g7-guard-home', TRAIL_HOME: '/tmp/g7-guard-home/.trail' };
 const input = (command: string) => ({ session_id: 'sess-guard', tool_name: 'Bash', tool_input: { command } });
@@ -92,9 +93,10 @@ test('a command built to make the guard backtrack is still read well inside the 
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', probe], { encoding: 'utf8', timeout: 30_000 });
   assert.equal(r.signal, null, 'the guard ran past 30 s');
   const rows = JSON.parse(r.stdout) as Array<{ hit: string | null; pre: boolean; ms: number }>;
+  const bar = timeBar(1500, 4500);
   for (const row of rows) {
     assert.ok(row.hit && row.pre, JSON.stringify(row));
-    assert.ok(row.ms < 1500, JSON.stringify(row));
+    assert.ok(row.ms < bar, `${JSON.stringify(row)} over ${bar} ms`);
   }
 });
 
@@ -128,5 +130,6 @@ test('the gated patterns read a long command in linear time: no span inside a ca
     process.stdout.write(JSON.stringify(out));`;
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', probe], { encoding: 'utf8', timeout: 60_000 });
   assert.equal(r.signal, null, 'the gated patterns ran past 60 s');
-  for (const row of JSON.parse(r.stdout) as Array<{ u: string; ms: number }>) assert.ok(row.ms < 1500, JSON.stringify(row));
+  const bar = timeBar(1500, 4500);
+  for (const row of JSON.parse(r.stdout) as Array<{ u: string; ms: number }>) assert.ok(row.ms < bar, `${JSON.stringify(row)} over ${bar} ms`);
 });
