@@ -136,7 +136,7 @@ test("a session with no state starts a new one; the state lives under `skills`, 
   assert.deepEqual(Object.keys(disk).sort(), ["other", "skills", "trace"]);
   assert.equal(disk.skills.runs[0].job, "tests");
   assert.ok(disk.trace.offset > 0);
-  assert.equal(statSync(stateFile(b)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(stateFile(b)).mode & 0o777, 0o600);
   assert.ok(!readFileSync(stateFile(b), "utf8").includes("integration tests"), "no typed text on disk");
   // Nothing new: the next catch-up folds nothing.
   withSkillSession(ctx, { catchUp: true }, (_st, fold) => assert.equal(fold!.events.length, 0));

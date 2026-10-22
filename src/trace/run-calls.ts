@@ -285,7 +285,17 @@ function scratchRoots(): string[] {
   return [tmpdir(), process.env.TMPDIR ?? '', '/tmp', '/private/tmp', '/var/folders'].filter(Boolean).map((p) => resolve(p));
 }
 
-const inScratch = (p: string) => /\/scratchpad\//.test(p) || scratchRoots().some((r) => p === r || p.startsWith(r + sep));
+const POSIX_SCRATCH = ['/tmp', '/private/tmp', '/var/folders'];
+
+function inScratch(p: string): boolean {
+  if (/\/scratchpad\//.test(p) || scratchRoots().some((r) => p === r || p.startsWith(r + sep))) return true;
+  if (process.platform !== 'win32') return false;
+  // Windows: a path may use either slash and any case, and Git Bash's /tmp is the person's temp folder.
+  const fwd = p.replace(/\\/g, '/').toLowerCase();
+  if (fwd.includes('/scratchpad/') || POSIX_SCRATCH.some((r) => fwd === r || fwd.startsWith(`${r}/`))) return true;
+  const q = resolve(p).toLowerCase();
+  return scratchRoots().some((r) => q === r.toLowerCase() || q.startsWith(r.toLowerCase() + sep));
+}
 
 /** Absolute paths of helper scripts the run executed from scratch folders (4.5 step 7), from its ok step calls. */
 export function runHelpers(run: Pick<RunState, 'calls'>): string[] {

@@ -45,8 +45,8 @@ test("a session-day is noted once; costly is OR-ed; words merge; the good run is
   assert.equal(e.shownAtInit, false);
   const disk = JSON.parse(readFileSync(poolPath(KEY, env), "utf8"));
   assert.deepEqual(disk.jobs.ship, e);
-  assert.equal(statSync(poolPath(KEY, env)).mode & 0o777, 0o600);
-  assert.equal(statSync(dirname(poolPath(KEY, env))).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(poolPath(KEY, env)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(dirname(poolPath(KEY, env))).mode & 0o777, 0o700);
   assert.ok(!/prompt|typed/.test(readFileSync(poolPath(KEY, env), "utf8")));
 });
 

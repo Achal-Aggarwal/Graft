@@ -32,7 +32,8 @@ export function hookError(hook: string, e: unknown, env: NodeJS.ProcessEnv = pro
   try {
     const err = e instanceof Error ? e : new Error('not an Error');
     const where = (err.stack ?? '').split('\n').slice(1).map((l) => /\(?([^\s()]+:\d+):\d+\)?$/.exec(l.trim())?.[1]).find(Boolean) ?? '';
-    const file = (where.split('/').pop() ?? '').replace(/[^\w.:-]/g, '');
+    // The file's own name only: a Windows frame's folders are joined by '\', and they would name the person.
+    const file = (where.split(/[\\/]/).pop() ?? '').replace(/[^\w.:-]/g, '');
     const path = trailPath(env, 'state', 'hook-errors.log');
     appendPrivateLine(path, `${new Date().toISOString()} ${hook} ${err.name.replace(/[^\w]/g, '').slice(0, 40)}${file ? ` ${file}` : ''}`);
     if (statSync(path).size > LOG_MAX) {
