@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { emptyRecord, initRecordPath, MAX_RUNS, newRunId, pendingItems, readInitRecord, updateInitRecord, writeInitRecord, type InitRecord } from "../src/init/init-record.js";
+import { timeBar } from "./machine-speed.js";
 
 const KEY = "github.com/acme/shop";
 const sha = "a".repeat(64);
@@ -149,7 +150,7 @@ test("a FIFO planted at the record reads as no record, at once", { skip: process
     execFileSync("mkfifo", [path]);
     const t0 = Date.now();
     assert.deepEqual(readInitRecord(KEY, h.env), emptyRecord(KEY));
-    assert.ok(Date.now() - t0 < 2000);
+    assert.ok(Date.now() - t0 < timeBar(2000, 6000));
   } finally {
     h.done();
   }

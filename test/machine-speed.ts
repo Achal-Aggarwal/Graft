@@ -50,3 +50,14 @@ export function slowness(): number {
   cached ??= Math.min(10, Math.max(1, workloadMs() / REFERENCE_MS));
   return cached;
 }
+
+/**
+ * A timing bar for this machine: `ms` where it was set, times slowness(), and never under `floor`. The timing
+ * tests catch the catastrophic (a backtracking regex, a lost index, O(n^2): ten times over or more), not a few
+ * ms over on a busy shared runner, so a floor of 3 to 5 times the bar costs them nothing. Exactly `ms` under
+ * TRAIL_PERF=1, the strict run.
+ */
+export function timeBar(ms: number, floor: number): number {
+  if (process.env.TRAIL_PERF === "1") return ms;
+  return Math.max(ms * slowness(), floor);
+}
