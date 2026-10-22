@@ -69,7 +69,7 @@ test("the log: one line per event, 0600, folded to one record per offer with its
     id: a.offerId, at: ago(1).toISOString(), event: "shown", repo: SHOP, key: `${SHOP}|job:ship`, moment: "repeated", runId: a.runId, name: a.name, channel: "stop",
   });
   assert.deepEqual(lines[2], { ...lines[0], at: ago(1, -120_000).toISOString(), event: "answer", answer: "yes" });
-  assert.equal(statSync(offersPath(env)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(offersPath(env)).mode & 0o777, 0o600); // no POSIX modes on Windows
   assert.equal(readOffers(env).length, 5);
   const folded = foldOffers(readOffers(env));
   assert.deepEqual(folded.map((r) => [r.id, r.event, r.at, r.answer]), [
