@@ -22,6 +22,7 @@ import {
   VALUE_COPY, guardrailStopsIn, markValueSaid, noteValue, startValue, valueContext, valueCounts, valueDue, valueLine, valuePath,
   valueWeek, valueWords,
 } from "../src/skills/value-line.js";
+import { timeBar } from "./machine-speed.js";
 
 const SHOP = "github.com/acme/shop";
 const OTHER = "github.com/acme/storefront";
@@ -232,13 +233,20 @@ test("the context has the D107 shape: Trail's opening, why, for the person, one 
 });
 
 test("a busy value.json lock drops the count and never waits over 50 ms", () => {
+  // The same call with the lock free, for what the work itself takes on this machine.
+  const free = box("busy-free");
+  noteValue(SHOP, { guardrailStops: 1 }, free.env, NOW);
+  const f0 = Date.now();
+  noteValue(SHOP, { guardrailStops: 1 }, free.env, NOW);
+  const work = Date.now() - f0;
   const b = box("busy");
   noteValue(SHOP, { guardrailStops: 1 }, b.env, NOW);
   writeFileSync(`${valuePath(b.env)}.lock`, "4242");
   const t0 = Date.now();
   noteValue(SHOP, { guardrailStops: 5, wallFixes: 5 }, b.env, NOW);
   const waited = Date.now() - t0;
-  assert.ok(waited < 190, `waited ${waited} ms: the hook lock wait is 50 ms, not 1a's 200`);
+  // Over the work itself, so a slow machine's work doesn't count as waiting; a 200 ms wait still shows.
+  assert.ok(waited - work < 190, `waited ${waited} ms (the work alone ${work} ms): the hook lock wait is 50 ms, not 1a's 200`);
   assert.deepEqual(valueFile(b).repos[SHOP].days, { "2026-10-22": { g: 1, w: 0 } }, "the busy count is dropped");
   assert.equal(markValueSaid(SHOP, b.env, NOW), false, "a busy lock says so");
   assert.equal(startValue(start(), b.env, NOW), null, "and SessionStart says nothing then");
@@ -285,7 +293,7 @@ test("never through a link: a linked state folder is not written; a FIFO at valu
   const t0 = Date.now();
   assert.equal(valueDue(SHOP, c.env, NOW), true);
   assert.equal(valueLine([SHOP], c.env, NOW), null);
-  assert.ok(Date.now() - t0 < 2000, "the read did not wait on the FIFO");
+  assert.ok(Date.now() - t0 < timeBar(2000, 6000), "the read did not wait on the FIFO");
 });
 
 test("guardrailStopsIn counts the guardrail's sure-fail denies a Stop collected, nothing else", () => {

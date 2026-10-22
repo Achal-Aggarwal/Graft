@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { agentGuard } from "../src/skills/risk.js";
 import { skillsPrefilter } from "../src/claude/pre-bash.js";
 import { preBashSkills } from "../src/claude/pre-bash-skills.js";
+import { timeBar } from "./machine-speed.js";
 
 const ENV = { HOME: "/tmp/c2-guard-home", TRAIL_HOME: "/tmp/c2-guard-home/.trail" };
 const input = (command: string) => ({ session_id: "sess-c2-guard", tool_name: "Bash", tool_input: { command } });
@@ -61,9 +62,10 @@ test("1a's plain restore, show, and commands that only mention the words stay op
 
 test("a 2 MB command of restore words is read in well under the hook's 5 s", () => {
   const big = 1_900_000;
+  const bar = timeBar(1500, 4500);
   for (const c of ["x; " + "trail skills restore a ".repeat(big / 23), "trail x; " + "skills restore $".repeat(big / 16), "s=1; trail $s " + "restore a --version ".repeat(big / 20)]) {
     const t = Date.now();
     agentGuard(c);
-    assert.ok(Date.now() - t < 1500, `${Date.now() - t} ms`);
+    assert.ok(Date.now() - t < bar, `${Date.now() - t} ms, over ${bar} ms`);
   }
 });
