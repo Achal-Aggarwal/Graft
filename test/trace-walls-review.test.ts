@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { lastTimeText, matchWall, sshRemoteFor, wallFixText } from "../src/trace/walls.js";
+import { timeBar } from "./machine-speed.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
@@ -87,15 +88,19 @@ test("a command over 64 KB matches nothing, and long commands stay fast (capped 
     const n = 2 * 1024 * 1024;
     const cmds = ['('.repeat(n / 2) + ')'.repeat(n / 2), '{ '.repeat(n / 2), 'if true; then '.repeat(n / 14), "sh -c 'npm x' ; ".repeat(n / 16)];
     const outs = ['x'.repeat(n), ': '.repeat(n / 2), 'zsh:1:'.repeat(n / 6), 'a\\n'.repeat(n / 2)];
+    // CPU time, best of 3: the work matchWall does, not how busy the machine is (the suite runs files side by side).
+    const cpu = (fn) => { let best = Infinity; for (let k = 0; k < 3; k++) { const t = process.cpuUsage(); fn(); const d = process.cpuUsage(t); best = Math.min(best, (d.user + d.system) / 1000); } return best; };
     const rows = [];
-    for (const c of cmds) { const t = performance.now(); matchWall('npm ERR! code E401\\n', c, true); rows.push(performance.now() - t); }
-    for (const o of outs) { const t = performance.now(); matchWall(o, 'npm test', true); matchWall(o, 'npm test', false); rows.push(performance.now() - t); }
+    for (const c of cmds) rows.push(cpu(() => matchWall('npm ERR! code E401\\n', c, true)));
+    for (const o of outs) rows.push(cpu(() => { matchWall(o, 'npm test', true); matchWall(o, 'npm test', false); }));
     process.stdout.write(JSON.stringify(rows));`;
   const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe], { encoding: "utf8", timeout: 30_000 });
   assert.equal(r.signal, null, "matchWall ran past 30 s");
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout) as number[];
-  for (const ms of rows) assert.ok(ms < 20, `2 MB took ${ms.toFixed(1)} ms`);
+  // 20 ms of CPU where the bar was set, scaled, never under 80: a backtracking pattern takes seconds on 2 MB.
+  const bar = timeBar(20, 80);
+  for (const ms of rows) assert.ok(ms < bar, `2 MB took ${ms.toFixed(1)} ms, over ${bar.toFixed(1)} ms`);
 });
 
 test("lastTimeText: a lesson's $ signs reach the line as written; junk dates don't make 'twice'", () => {
