@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { hooksShim, installHintPath, rememberInstall } from '../src/claude/shim-template.js';
 import { learningId } from '../src/notes/learning-fields.js';
 import { tmpRepo } from './helpers.js';
+import { jsLit } from './escape.js';
 
 /** A fake installed @nanonets/graft whose hooks entry records that it ran. */
 function fakeInstall(root: string, name: string, version: string): string {
@@ -32,7 +33,7 @@ function fakeInstall(root: string, name: string, version: string): string {
   // `m.main(...)` resolves — same shape the real dist has for the shim's call.
   writeFileSync(
     join(distClaude, 'hooks.js'),
-    `module.exports.main = () => require('node:fs').writeFileSync(process.env.MARKER, ${JSON.stringify(version)});\n`,
+    `module.exports.main = () => require('node:fs').writeFileSync(process.env.MARKER, ${jsLit(version)});\n`,
   );
   return distClaude;
 }
@@ -71,7 +72,7 @@ function fakeInstall(root: string, name: string, version: string): string {
 function isolate(root: string, extraPath: string[] = []): { preload: string; env: NodeJS.ProcessEnv } {
   const preload = join(root, 'no-ambient-graft.cjs');
   const execPath = join(root, 'node-prefix', 'bin', 'node');
-  writeFileSync(preload, `Object.defineProperty(process, 'execPath', { value: ${JSON.stringify(execPath)}, configurable: true });\n`);
+  writeFileSync(preload, `Object.defineProperty(process, 'execPath', { value: ${jsLit(execPath)}, configurable: true });\n`);
   const prefix = join(root, 'npm-prefix');
   mkdirSync(prefix, { recursive: true });
   const ambient = (d: string) => ['trail', 'graft', 'trail.cmd', 'graft.cmd'].some((b) => existsSync(join(d, b)));

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { pickFive } from "../src/init/candidates.js";
 import { afterKeepLines, numbered, relayLines, screenLines, yesLine } from "../src/init/review-screen.js";
 import { KEEP_LINE, RELAY_LINE } from "../src/init/relay.js";
+import { escapeRe } from "./escape.js";
 import type { InitCandidate } from "../src/init/types.js";
 import { factsOf, guardrailCandidate, prefCandidate, skillCandidate, threeItems } from "./init-screen-fixtures.js";
 
@@ -63,7 +64,7 @@ test("the agent's relay (J02): from Trail, RELAY_LINE and KEEP_LINE word for wor
     "Trail checks the numbers the person typed in this session before it keeps anything, so run trail keep only with the numbers they typed.",
   ]);
   const text = lines.join("\n");
-  assert.equal(text.match(new RegExp(RELAY_LINE.replace(/[.]/g, "\\.")), "g")?.length, 1, "once");
+  assert.equal(text.match(new RegExp(escapeRe(RELAY_LINE)), "g")?.length, 1, "once");
   assert.doesNotMatch(text, /\b(?:pick|choose|recommend|whatever looks useful)\b(?! for them)/i, "never tells the agent to choose");
   assert.doesNotMatch(text, WORDS);
 });

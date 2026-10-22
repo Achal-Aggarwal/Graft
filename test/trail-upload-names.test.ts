@@ -15,6 +15,7 @@ import { dropActivity, flushActivity, syncRepo } from "../src/cloud/workspace-sy
 import { isError, writeCloud, type Cloud } from "../src/cloud/workspace.js";
 import { cacheDir } from "../src/util/state.js";
 import { tmpRepo } from "./helpers.js";
+import { escapeRe } from "./escape.js";
 
 process.env.DO_NOT_TRACK = "1";
 process.env[BRAND_ENV] = "trail";
@@ -356,7 +357,7 @@ test("trail workspace names a learning left out for a secret, and why, instead o
   });
   server.close();
   assert.equal(out.code, 0, out.err);
-  assert.match(out.out, new RegExp(`left out: ${leaky.replace(/\./g, "\\.")}: looks like it holds a secret \\(an API key\\)`), out.out + out.err);
-  assert.doesNotMatch(out.out, new RegExp(COMMITTED.replace(/\./g, "\\.")), "only what was left out is named");
+  assert.match(out.out, new RegExp(`left out: ${escapeRe(leaky)}: looks like it holds a secret \\(an API key\\)`), out.out + out.err);
+  assert.doesNotMatch(out.out, new RegExp(escapeRe(COMMITTED)), "only what was left out is named");
   assert.ok(!out.out.includes(key), "the secret itself is never printed");
 });
