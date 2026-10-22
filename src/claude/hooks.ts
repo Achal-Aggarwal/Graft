@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { readWiring } from './stats.js';
 import { formatBlastRadius, relevantRetrieval, formatOrientation, notesForPrompt, notesOnTouch, standingDirective, type Touch } from './format.js';
 import { commitLines, listNotes, setupCommitLine, standingLearnings } from '../notes/notes.js';
+import { liveLearnings } from '../notes/learning-fields.js';
 import { noteAuthor, teammatesOn } from '../notes/git-facts.js';
 import { indexFreshness, staleBanner } from '../context/check.js';
 import { patchStats, readStats, acquireLock, readSession, writeSession, resolveContextDir } from './state.js';
@@ -20,7 +21,7 @@ import { classifyToolUse, commandInvokesGraft, isMcpToolName, isGraftMcpTool, pa
 import { adoptRepoBrand, brand, cmd, commandOnPath, repoWiredForTrail, tag, trailHandoverLine, trailOnPath } from '../brand.js';
 import { fitTrailServerToMachine } from '../hosts/claude-global.js';
 import { globalCopyCovers } from './hook-layers.js';
-import { NOTE_CALL } from '../notes/session-cost.js';
+import { NOTE_ASKS_PER_SESSION, noteAsk, noteSignals } from './note-signals.js';
 import { keepsNotes, noteCount, repoPlace } from '../notes/home.js';
 import { branchesStale, overlapMark, readBranchCache, refreshBranches, SESSION_REFRESH_MS } from '../notes/branches.js';
 import { learningFiles } from '../notes/repo-trail.js';
@@ -155,7 +156,7 @@ function graftJson(dir: string, args: string[], timeout: number = CHILD_TIMEOUT_
     // out to the real CLI (which isn't built relative to the TS source under test).
     const cliPath = process.env.GRAFT_TEST_CLI ?? graftCliPath();
     const out = execFileSync(process.execPath, [cliPath, ...args],
-      { cwd: dir, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'] });
+      { cwd: dir, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     return JSON.parse(out);
   } catch (e: any) {
     // `graft check` exits non-zero when the graph is stale (by design) but still
@@ -331,7 +332,7 @@ export function learningsOnTouch(input: any, dir: string): string | null {
     } else if (typeof ti.command === 'string' && ti.command && !commandInvokesGraft(ti.command)) {
       touch = { command: ti.command };
     } else return null;
-    const notes = listNotes(dir, { branches: false });
+    const notes = liveLearnings(listNotes(dir, { branches: false }));
     if (!notes.length) return null;
     const id = input?.session_id || 'default';
     const s = readSession(dir, id);
@@ -462,82 +463,27 @@ function countTallyTurn(input: any, dir: string): void {
   }
 }
 
-/** Tool calls in one turn before it counts as digging worth a note. */
-export const NOTE_WORTHY_CALLS = 3;
-
 /**
- * Reading that trail's answers stood in for, in one turn, before it counts as
- * digging too. trail answers most questions in one or two calls, so on calls
- * alone an exploratory turn never qualified and its findings were never saved.
- */
-export const NOTE_WORTHY_TOKENS = 30_000;
-
-/** The reading a query stood in for, from its `[trail] tokens saved ≈ N` line. A
- * reused learning's own line doesn't count: that digging was done before. */
-function codeReadIn(content: unknown): number {
-  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '';
-  let total = 0;
-  for (const m of text.matchAll(/\[(?:graft|trail)\] tokens saved ≈ ([\d,]+)/g)) total += Number(m[1]!.replace(/,/g, '')) || 0;
-  return total;
-}
-
-/** What the agent is told when a turn took real digging and left no note. */
-export const NOTE_ASK =
-  '[trail] This took real digging and the session has saved no learning. Before you finish, save one for the next session: ' +
-  '`trail note --title "<what it was about>"` with the text on stdin, under ## Decided, ## Tried and ruled out and ## Watch out. ' +
-  "A summary, never a transcript, and nothing secret. If you've committed this work, commit the learning too. Then finish as trail's output asks, if it asks anything.";
-
-/**
- * Whether the turn that just ended deserves a note: since the person's last
- * message it made at least NOTE_WORTHY_CALLS tool calls, or trail's answers in
- * it stood in for at least NOTE_WORTHY_TOKENS of reading; and nothing in the
- * session has run `trail note` yet. Pure, for tests: `text` is the
- * transcript's JSONL.
- */
-export function turnWantsNote(text: string): boolean {
-  let calls = 0;
-  let codeRead = 0;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let e: any;
-    try {
-      e = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const content = e?.message?.content;
-    const blocks: any[] = Array.isArray(content) ? content : [];
-    // A message the person typed starts a new turn; a tool result does not.
-    if (e?.type === 'user' && (typeof content === 'string' || blocks.some((b) => b?.type === 'text'))) {
-      calls = 0;
-      codeRead = 0;
-    }
-    for (const b of blocks) {
-      if (b?.type === 'tool_result') codeRead += codeReadIn(b.content);
-      if (b?.type !== 'tool_use') continue;
-      if (typeof b.input?.command === 'string' && NOTE_CALL.test(b.input.command)) return false;
-      calls++;
-    }
-  }
-  return calls >= NOTE_WORTHY_CALLS || codeRead >= NOTE_WORTHY_TOKENS;
-}
-
-/**
- * Under trail, a turn that took real digging and left no note is asked once
- * per session to leave one, by blocking the stop with the reason. The agent
- * then saves the note, and trail's output carries on from there (the sign-in
- * link, when one is due). Never blocks twice in a row: Claude Code sets
- * `stop_hook_active` on the stop that follows a block.
+ * Under trail, a sign in the transcript that the session found something the
+ * code won't tell the next person (a check that failed then passed after an
+ * edit, a correction, an undone edit, a picked option, a commit; see
+ * note-signals.ts) asks the agent to save a learning, by blocking the stop
+ * with the reason. Each sign is asked about once, and a session is asked at
+ * most NOTE_ASKS_PER_SESSION times; a saved learning starts the signs over.
+ * Never blocks twice in a row: Claude Code sets `stop_hook_active` on the
+ * stop that follows a block.
  */
 function askForNote(input: any, dir: string): void {
   try {
     if (brand() !== 'trail' || input?.stop_hook_active || !input?.transcript_path || !keepsNotes(dir)) return;
     const id = input?.session_id || 'default';
     const s = readSession(dir, id);
-    if (s.noteAsked) return;
-    if (!turnWantsNote(readFileSync(input.transcript_path, 'utf8'))) return;
-    writeSession(dir, id, { ...s, noteAsked: true });
-    process.stdout.write(JSON.stringify({ decision: 'block', reason: NOTE_ASK }));
+    const asked = s.noteAsks ?? [];
+    if (asked.length >= NOTE_ASKS_PER_SESSION) return;
+    const sign = noteSignals(readFileSync(input.transcript_path, 'utf8'), dir).find((x) => !asked.includes(x.key));
+    if (!sign) return;
+    writeSession(dir, id, { ...s, noteAsks: [...asked, sign.key] });
+    process.stdout.write(JSON.stringify({ decision: 'block', reason: noteAsk(sign) }));
   } catch {
     // A missed reminder costs one note; a broken Stop hook costs the session.
   }
@@ -575,7 +521,7 @@ export function trackRepoSeen(dir: string, now = Date.now()): void {
     const mark = join(cacheDir(place.checkout), 'trail-repo-seen.json');
     if (now - (readJson<{ at?: number }>(mark)?.at ?? 0) < DAY_MS) return;
     writeJsonAtomic(mark, { at: now }, true);
-    const tracked = execFileSync('git', ['ls-files', '--', '.trail'], { cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+    const tracked = execFileSync('git', ['ls-files', '--', '.trail'], { cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true });
     track(
       'repo_seen',
       { trail_committed: String(tracked.trim().length > 0), learnings_bucket: countBucket(learningFiles(place.checkout).length), workspace: String(inWorkspace(place.checkout)) },
@@ -598,7 +544,7 @@ export function trackLearningsCommitted(dir: string): void {
     const place = repoPlace(dir);
     if (!place.git) return;
     const listed = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', '.trail/learnings'], {
-      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true,
     });
     const count = listed.split('\n').filter((f) => f.endsWith('.md')).length;
     const mark = join(cacheDir(place.checkout), 'trail-learnings-committed.json');
@@ -627,7 +573,7 @@ export function uncommittedDirective(dir: string, now = Date.now()): string {
     const place = repoPlace(dir);
     if (!place.git) return '';
     const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', '.trail/learnings'], {
-      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true,
     });
     const n = status.split('\n').filter((l) => l.trimEnd().endsWith('.md')).length;
     const setup = setupUncommitted(place.checkout);
@@ -654,7 +600,7 @@ export function uncommittedDirective(dir: string, now = Date.now()): string {
  */
 export function setupUncommitted(checkout: string): boolean {
   if (!existsSync(join(checkout, '.trail', 'hook.cjs'))) return false;
-  const git = (args: string[]) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+  const git = (args: string[]) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true });
   try {
     git(['ls-files', '--error-unmatch', '--', '.trail/hook.cjs']);
   } catch {
@@ -769,7 +715,8 @@ export async function main(event: string): Promise<void> {
 
   if (event === 'prompt') {
     const prompt = String(input?.prompt ?? '').trim();
-    if (prompt.length < MIN_PROMPT_CHARS) return;
+    // Background completion notices are machine events, not user queries.
+    if (prompt.length < MIN_PROMPT_CHARS || prompt.startsWith('<task-notification>')) return;
     // Pointers-only, small, gated. No --source: per-prompt injected tokens are
     // fresh full-price input on every turn (unlike the cached SessionStart
     // orientation), so the pack carries locators, never inlined code — the agent

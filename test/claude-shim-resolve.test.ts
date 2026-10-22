@@ -18,6 +18,7 @@ import { chmodSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkS
 import { delimiter, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { hooksShim, installHintPath, rememberInstall } from '../src/claude/shim-template.js';
+import { learningId } from '../src/notes/learning-fields.js';
 import { tmpRepo } from './helpers.js';
 
 /** A fake installed @nanonets/graft whose hooks entry records that it ran. */
@@ -262,6 +263,19 @@ test('a learning title reads clean whichever quotes it has, as trail wrote it or
   assert.ok(ctx.includes("- assign: one PR into dev, it's the rule (Priya) ·"), ctx);
   assert.ok(ctx.includes('- graft: say "trail" now (Sam) ·'), ctx);
   assert.ok(ctx.includes('- Retries decision 0 (Anirudh) ·'), ctx);
+});
+
+test('a learning another one replaces, by its id, is not listed', () => {
+  const root = tmpRepo('shim-offer-replaced');
+  const repo = clonedWithLearnings(root, 'Kumar', ['Anirudh']);
+  const dir = join(repo, '.trail', 'learnings');
+  writeFileSync(join(dir, '2026-10-15-pool-old.md'), `---\ntitle: Pool size is 8\nauthor: Priya\nid: l-0b0b0b0b\n---\n`);
+  writeFileSync(join(dir, '2026-10-16-pool-new.md'), `---\ntitle: Pool size is 16\nauthor: Priya\nreplaces: l-0b0b0b0b\n---\n`);
+  // A file written before ids is known by the one its name gives it.
+  writeFileSync(join(dir, '2026-10-17-retries-now-6.md'), `---\ntitle: Retries are 6\nauthor: Sam\nreplaces: ${learningId('2026-10-10-retries-anirudh.md')}\n---\n`);
+  const ctx: string = JSON.parse(runBare(root, repo, 'session-start')).hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes('- Pool size is 16 (Priya) ·') && ctx.includes('- Retries are 6 (Sam) ·'), ctx);
+  assert.ok(!ctx.includes('Pool size is 8') && !ctx.includes('Retries decision 0'), ctx);
 });
 
 test('without trail, other events and a repo with no learnings stay silent', () => {

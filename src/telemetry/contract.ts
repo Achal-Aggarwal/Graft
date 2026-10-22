@@ -78,12 +78,14 @@ export const EVENTS: Record<string, ReadonlySet<string>> = {
    *  buckets, and whether it's the clone's first look. Committed learnings
    *  are trail's activation. Paths and titles never travel. */
   learnings_committed: new Set<string>(['added_bucket', 'total_bucket', 'first_look']),
-  /** `trail init` read the repo's past Claude sessions, or the review comments
-   *  on its merged PRs (`source`), for learnings: how it went, how many
-   *  sessions or reviewed PRs there were, findings Claude offered and trail
-   *  saved, as buckets, how long it took, and the model. The messages, the
-   *  comments and the findings never travel. */
-  cold_start: new Set<string>(['source', 'outcome', 'sessions_bucket', 'reviews_bucket', 'offered_bucket', 'picked_bucket', 'duration_bucket', 'model']),
+  /** `trail init` read the repo's past Claude sessions, the review comments
+   *  on its merged PRs, or Claude Code's memory notes of it (`source`), for
+   *  learnings: how it went, how many sessions or reviewed PRs there were,
+   *  findings offered and saved, how many were left out for naming no code
+   *  (`filtered`), and how many of those offered and saved were the team's,
+   *  as buckets, how long it took, and the model. The messages, the comments,
+   *  the notes and the findings never travel. */
+  cold_start: new Set<string>(['source', 'outcome', 'sessions_bucket', 'reviews_bucket', 'offered_bucket', 'filtered_bucket', 'picked_bucket', 'team_offered_bucket', 'team_picked_bucket', 'duration_bucket', 'model']),
   /** `trail learn` saved a correction as a takeaway on a skill (into
    *  `~/.trail/`). `new_skill` says whether it started a skill. The text never
    *  travels. */

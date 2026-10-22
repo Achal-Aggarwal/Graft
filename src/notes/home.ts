@@ -177,6 +177,25 @@ export function keyFromRemote(url: string): string | null {
   return [host, ...parts].join("/");
 }
 
+/**
+ * The checkout at or above `start` and its remote's key (`github.com/nanonets/assign`),
+ * as written in its git config, before any `insteadOf`: a clone whose fetches go
+ * somewhere else still names the same repo. Null outside git or without a remote.
+ * Reads only; spawns nothing.
+ */
+export function remoteKey(start: string): { checkout: string; key: string } | null {
+  const top = checkoutRoot(start);
+  const dirs = top ? gitDirs(top) : null;
+  if (!top || !dirs) return null;
+  try {
+    const url = remoteUrl(readFileSync(join(dirs.commonDir, "config"), "utf8"));
+    const key = url ? keyFromRemote(url) : null;
+    return key ? { checkout: top, key } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** `local/Users-priya-src-extract`: the key for a repo with no remote, or a folder outside git. */
 function pathKey(dir: string): string {
   return `local/${segment(resolve(dir)) || "root"}`;
