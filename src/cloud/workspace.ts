@@ -259,6 +259,8 @@ export interface ActivityEvent {
   /** File names of the learnings it showed. */
   shown_paths: string[];
   shown_authors: string[];
+  /** Tokens the map saved on this lookup (what `ask` prints as "tokens saved"); absent when unknown. */
+  saved_tokens?: number;
   at: string;
 }
 

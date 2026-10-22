@@ -64,6 +64,7 @@ import { beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/p
 import { finishPair, PairRun, validPairCode } from "./cloud/pair.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
 import { confirm, fold, getSkill, learn, listSkills, publish, skillForAgent, skillName, skillStatus, type LearnResult } from "./skills/skills.js";
+import { recordLookup } from "./cloud/lookup-activity.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
 import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, trailUrl, writeCloud, type Cloud } from "./cloud/workspace.js";
 import {
@@ -741,38 +742,25 @@ grouped(program.command("build"), GROUP.setup)
     }
   });
 
-/** The file part of a hit's `file:Lx-Ly` pointer. */
-function pointerFile(pointer: string): string {
-  return pointer.replace(/:L\d+(-L?\d+)?$/, "");
-}
-
 /**
  * After `ask`, under trail: which shown learnings are a teammate's, and the
- * shown learnings recorded as a use, which is what the team page counts as
- * reuse. Then the background upkeep that keeps branches and the workspace
- * current. Spawns no git itself. Teammates' branches come up after an edit
+ * lookup recorded (the learnings shown are a use, which is what the team page
+ * counts as reuse; the tokens saved ride along). Then the background upkeep
+ * that keeps branches and the workspace current. Spawns no git itself. Teammates' branches come up after an edit
  * instead, once there's a function to compare (notes/edit-overlap.ts).
  */
 function afterAsk(r: AskResult, repo: string): void {
+  // Every lookup is reported, not only ones that showed a learning: the tokens
+  // the map saved are what the team page's running total counts. A no-op unless
+  // this machine is connected and the repo is the workspace's.
+  recordLookup(r, repo);
   if (!r.notesChecked) return;
   rememberRepo(repo);
   maybeRefreshBranches(repo);
   const me = noteAuthor(repo);
-  const files = [...new Set(r.hits.map((h) => pointerFile(h.pointer)))];
   const shown = r.notes ?? [];
   if (shown.length) {
     for (const h of shown) h.note.teammate = !!h.note.author && !!me && h.note.author !== me;
-    recordActivity({
-      repo: repoPlace(repo).key,
-      kind: "search",
-      asker: me,
-      session: sessionKey(repo) ?? `${me}-${new Date().toISOString().slice(0, 10)}`,
-      query: r.query,
-      files,
-      shown_paths: shown.map((h) => noteName(h.note)),
-      shown_authors: shown.map((h) => h.note.author),
-      at: new Date().toISOString(),
-    });
     const saved = shown.reduce((sum, h) => sum + savedByNote(h.note), 0);
     track("learning_reused", { teammate: String(shown.some((h) => h.note.teammate)), saved_tokens_bucket: savedTokensBucket(saved) }, { repo });
   }
