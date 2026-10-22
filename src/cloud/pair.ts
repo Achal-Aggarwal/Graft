@@ -17,6 +17,7 @@ import { graftCliPath } from "../claude/paths.js";
 import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
 import { newState, pickerRepos } from "./nudge.js";
+import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, learningsPayload, syncRepo } from "./workspace-sync.js";
 import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, trailUrl, writeCloud, type Cloud } from "./workspace.js";
 
@@ -25,13 +26,24 @@ export function validPairCode(code: string): boolean {
   return /^[A-Za-z0-9-]{6,64}$/.test(code.trim());
 }
 
-export type PhaseId = "install" | "files" | "prs" | "decisions" | "learnings";
+export type PhaseId = "install" | "files" | "tokens" | "prs" | "decisions" | "team" | "learnings";
 type PhaseStatus = "todo" | "running" | "done";
 interface Phase {
   id: PhaseId;
   label: string;
   status: PhaseStatus;
   count: string;
+}
+
+/**
+ * What init found out beyond the learnings, for the onboarding page: one
+ * lookup's token saving, the sessions read, and teammates' branches on this
+ * person's files. An empty `teammates` list means "checked, none".
+ */
+export interface PairFindings {
+  tokens?: TokensSummary | null;
+  sessions?: number;
+  teammates?: TeammateSummary[];
 }
 
 /** The most found learnings one progress call may carry. */
@@ -57,8 +69,10 @@ export class PairRun {
     this.phases = [
       { id: "install", label: "Install Trail-code", status: "done", count: version },
       { id: "files", label: "Map the code", status: "todo", count: "" },
+      { id: "tokens", label: "Measure one lookup", status: "todo", count: "" },
       { id: "prs", label: "Read pull request reviews", status: "todo", count: "" },
       { id: "decisions", label: "Read past Claude sessions", status: "todo", count: "" },
+      { id: "team", label: "Check your team's branches", status: "todo", count: "" },
       { id: "learnings", label: "Write learnings", status: "todo", count: "" },
     ];
   }
@@ -92,6 +106,15 @@ export class PairRun {
   phase(id: PhaseId, status: PhaseStatus, count = "", log?: string): void {
     this.phases = this.phases.map((p) => (p.id === id ? { ...p, status, count: count || p.count } : p));
     this.send({ phases: this.phases, ...(log ? { log: [log] } : {}) });
+  }
+
+  /** Send what init found beyond the learnings; keys left undefined (or a null `tokens`) are left out. */
+  findings(f: PairFindings): void {
+    const out: Record<string, unknown> = {};
+    if (f.tokens) out.tokens = f.tokens;
+    if (f.sessions !== undefined) out.sessions = f.sessions;
+    if (f.teammates !== undefined) out.teammates = f.teammates;
+    this.send({ findings: out });
   }
 
   /** Hand over the repo's learnings for review, then say the read is done. */

@@ -1705,6 +1705,15 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       });
     }
 
+    // With --pair, one lookup measured against reading the files whole: the
+    // page's token step. It needs the map, so it follows the build.
+    let tokens: ReturnType<typeof tokensOnOneLookup> = null;
+    if (pair) {
+      pair.phase("tokens", "running", "", "Measuring one lookup against reading the files");
+      tokens = tokensOnOneLookup(repo, { contextDir: program.opts<GlobalOpts>().dir });
+      pair.phase("tokens", "done", tokens ? `${tokens.pct}% fewer` : "skipped", tokens ? `One lookup used ${tokens.pct}% fewer tokens than reading ${tokens.files} file${tokens.files === 1 ? "" : "s"}` : undefined);
+    }
+
     if (!verbose) {
       // Warnings and removals in full, whatever else is folded.
       const removed = [...new Set(reports.flatMap((r) => r.retracted))];
@@ -1857,6 +1866,14 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // Hand what was found to the review page, and leave a child waiting for
     // the person to connect and review there.
     if (pair) {
+      // Teammates' branches on this person's files, checked against the
+      // learnings just saved and the repo's own: synchronous, so the finding
+      // exists before the page is told the read is done.
+      pair.phase("team", "running", "", "Checking your team's branches");
+      const teamNotes = listNotes(repo, { branches: false }).filter((n) => n.scope === "repo" && !n.ref);
+      const teammates = teammatesFromGit(repo, { learnings: teamNotes });
+      pair.phase("team", "done", `${teammates.length} ${teammates.length === 1 ? "person" : "people"}`);
+      pair.findings({ tokens, sessions: pastRead?.sessions, teammates });
       await pair.finish(repo);
       pair.handOff(repo);
       console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);

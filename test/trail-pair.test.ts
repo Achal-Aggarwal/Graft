@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { BRAND_ENV } from "../src/brand.js";
 import { writeNote } from "../src/notes/notes.js";
 import { finishPair, PairRun, validPairCode } from "../src/cloud/pair.js";
+import { teammatesFromGit } from "../src/cloud/onboarding.js";
 import { readCloud } from "../src/cloud/workspace.js";
 import { tmpRepo } from "./helpers.js";
 
@@ -136,4 +137,65 @@ test("an expired link stops the child without uploading", async () => {
   const outcome = await finishPair("s".repeat(32), repo(), { fetchImpl: t.fetch, sleep: async () => {} });
   assert.equal(outcome, "expired");
   assert.equal(t.calls.some((c) => c.path === "/api/cli/learnings"), false);
+});
+
+const progressCalls = (t: { calls: Call[] }) => t.calls.filter((c) => c.path === "/api/cli/handoffs/progress");
+const okTrail = () => fakeTrail((c) => (c.path === "/api/cli/handoffs" ? { status: 201, body: { url: "http://trail.test/connect?state=s" } } : { status: 202, body: {} }));
+
+test("phases include tokens and team in order", async () => {
+  freshHome();
+  const t = okTrail();
+  const run = await PairRun.start(repo(), "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  await run.flush();
+  const phases = progressCalls(t)[0]!.body.phases as { id: string; label: string }[];
+  assert.deepEqual(phases.map((p) => p.id), ["install", "files", "tokens", "prs", "decisions", "team", "learnings"]);
+  assert.equal(phases.find((p) => p.id === "tokens")!.label, "Measure one lookup");
+  assert.equal(phases.find((p) => p.id === "team")!.label, "Check your team's branches");
+});
+
+test("findings ride on progress", async () => {
+  freshHome();
+  const dir = repo();
+  const t = okTrail();
+  const run = await PairRun.start(dir, "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  run.findings({
+    tokens: { question: "how Do works", symbol: "Do", saved: 15392, pack: 2048, baseline: 17440, pct: 88, files: 3 },
+    sessions: 3,
+    teammates: [{ name: "Sam", email: "sam@acme.test", branch: "sam/retry", files: ["client.go"], change: "Raise retries to 10", pushed_at: "2026-10-21T14:20:00Z" }],
+  });
+  await run.finish(dir);
+  const withFindings = progressCalls(t).filter((c) => c.body.findings);
+  assert.equal(withFindings.length, 1);
+  const f = withFindings[0]!.body.findings as { tokens: { pct: number }; teammates: { branch: string }[]; sessions: number };
+  assert.equal(f.tokens.pct, 88);
+  assert.equal(f.teammates[0]!.branch, "sam/retry");
+  assert.equal(f.sessions, 3);
+});
+
+test("findings leave out what is undefined or null", async () => {
+  freshHome();
+  const t = okTrail();
+  const run = await PairRun.start(repo(), "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  run.findings({ tokens: null, sessions: undefined, teammates: [] });
+  await run.flush();
+  const f = progressCalls(t).find((c) => c.body.findings)!.body.findings as Record<string, unknown>;
+  assert.deepEqual(Object.keys(f), ["teammates"]);
+  assert.deepEqual(f.teammates, []);
+});
+
+test("teammates absent on a repo without origin", async () => {
+  freshHome();
+  const dir = tmpRepo("pair-no-origin");
+  git(dir, ["init", "-q", "-b", "main"]);
+  assert.deepEqual(teammatesFromGit(dir), []);
+  const t = okTrail();
+  const run = await PairRun.start(repo(), "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  run.findings({ teammates: [] });
+  await run.flush();
+  const f = progressCalls(t).find((c) => c.body.findings)!.body.findings as { teammates: unknown[] };
+  assert.deepEqual(f.teammates, []);
 });
