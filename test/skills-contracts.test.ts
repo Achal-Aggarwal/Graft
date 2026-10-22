@@ -14,6 +14,7 @@ import { tmpRepo } from "./helpers.js";
 import {
   appendPrivateLine, ensurePrivateDir, readJsonSafe, trailPath, withLock, writePrivate, writePrivateJson,
 } from "../src/util/private-fs.js";
+import { hookError } from "../src/claude/skills-hook-util.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const POSIX = process.platform !== "win32";
@@ -322,6 +323,18 @@ test("appendPrivateLine never writes through a symlink; writePrivate replaces th
 test("trailPath joins under TRAIL_HOME or ~/.trail", () => {
   assert.equal(trailPath({ TRAIL_HOME: "/tmp/x/home" }, "runs", "r-1.json"), resolve("/tmp/x/home", "runs", "r-1.json"));
   assert.match(trailPath({}, "settings.json"), /[\\/]\.trail[\\/]settings\.json$/);
+});
+
+test("hookError logs the file's own name, never its folders, from a Windows frame too", () => {
+  const root = tmpRepo("hook-error");
+  const env = { TRAIL_HOME: join(root, "trail") };
+  for (const frame of ["C:\\Users\\Priya Shah\\shop\\dist\\stop.js:12:5", "/home/priya/shop/dist/stop.js:12:5", "file:///C:/Users/priya/shop/dist/stop.js:12:5"]) {
+    const e = new TypeError("the prompt's words");
+    e.stack = `TypeError: the prompt's words\n    at fold (${frame})`;
+    hookError("stop", e, env);
+  }
+  const lines = readFileSync(join(root, "trail", "state", "hook-errors.log"), "utf8").trim().split("\n");
+  assert.deepEqual(lines.map((l) => l.split(" ").slice(1).join(" ")), Array(3).fill("stop TypeError stop.js:12"));
 });
 
 /* -------------------------------------------------------------------------- */
