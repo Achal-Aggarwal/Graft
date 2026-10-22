@@ -42,7 +42,7 @@ test("noteWalls: one entry per (sh, epoch, cls, program), newest last, written 0
   assert.deepEqual(w.classes["docker-rootless"]!.seen.map((s) => s.program), ["go", "npm"]);
   assert.equal(w.classes["docker-rootless"]!.fixed.length, 1);
   assert.ok(wallsPath(h.env).startsWith(join(h.dir, "trail")));
-  assert.equal(statSync(wallsPath(h.env)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(wallsPath(h.env)).mode & 0o777, 0o600);
   assert.ok(!existsSync(join(h.dir, "home", ".trail")), "nothing under HOME");
 });
 

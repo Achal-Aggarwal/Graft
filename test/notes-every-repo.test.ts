@@ -35,8 +35,8 @@ test("writeEveryRepo: the guardrail at its fixed name, id from the name, every r
   assert.match(text, /^check: no-timeout$/m);
   assert.match(text, /^enforce: sure-fail$/m);
   assert.match(text, /^status: active$/m);
-  assert.equal(statSync(path).mode & 0o777, 0o600);
-  assert.equal(statSync(everyRepoDir(h.env)).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(everyRepoDir(h.env)).mode & 0o777, 0o700);
   assert.ok(!existsSync(join(h.dir, "home")), "nothing under HOME");
 });
 

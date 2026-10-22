@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   findSkill, forgetSkill, keepHeld, listAllPersonal, listHeld, listSkills, markHeldShown, nameTaken, readSkill, restoreSkill, saveHeld, savePersonal,
   type PersonCheck, type ScopeCtx,
@@ -211,8 +211,8 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** One process recording `n` uses of a skill, as concurrent Stop hooks would. */
 function writer(env: NodeJS.ProcessEnv, id: string, n: number): Promise<number> {
   const script = `
-    const { recordUse } = await import(${JSON.stringify(join(REPO, "src/skills/state.ts"))});
-    const { appendLedger } = await import(${JSON.stringify(join(REPO, "src/skills/ledger.ts"))});
+    const { recordUse } = await import(${JSON.stringify(pathToFileURL(join(REPO, "src/skills/state.ts")).href)});
+    const { appendLedger } = await import(${JSON.stringify(pathToFileURL(join(REPO, "src/skills/ledger.ts")).href)});
     let ok = 0;
     for (let k = 0; k < ${n}; k++) {
       const u = { at: new Date().toISOString(), event: "use", useId: "u-" + process.pid.toString(16).slice(-3) + k.toString(16).padStart(3, "0"), skill: ${JSON.stringify(id)}, v: "1", host: "claude", cue: "job", repo: "github.com/acme/shop", stepsRan: [1], failedStep: k % 2 ? 2 : null, readyFailed: [], check: "none", calls: 2, failed: k % 2 };
@@ -248,7 +248,7 @@ test("real processes writing skills.json and the ledger at once: no use counted 
 /** One process marking one use corrected at the given instant, as a prompt hook in another session would. */
 function corrector(env: NodeJS.ProcessEnv, id: string, useId: string, atMs: number): Promise<void> {
   const script = `
-    const { recordCorrected } = await import(${JSON.stringify(join(REPO, "src/skills/state.ts"))});
+    const { recordCorrected } = await import(${JSON.stringify(pathToFileURL(join(REPO, "src/skills/state.ts")).href)});
     while (Date.now() < ${atMs}) { /* both start at the same instant */ }
     recordCorrected(${JSON.stringify(id)}, ${JSON.stringify(useId)}, ${JSON.stringify(env)});`;
   return new Promise((done, fail) => {

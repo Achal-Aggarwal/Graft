@@ -36,8 +36,8 @@ test("a sheet holds the run, its calls and its verdict; the run learns its sheet
   assert.equal(run.sheet, "checked");
   assert.equal(run.checkIndex, 2);
   const path = runSheetPath("r-1001-aaaa", env);
-  assert.equal(statSync(path).mode & 0o777, 0o600);
-  assert.equal(statSync(join(env.TRAIL_HOME!, "runs")).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(join(env.TRAIL_HOME!, "runs")).mode & 0o777, 0o700);
   const disk = JSON.parse(readFileSync(path, "utf8"));
   assert.deepEqual(disk, sheet);
   assert.deepEqual(

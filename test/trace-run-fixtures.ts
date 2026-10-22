@@ -6,7 +6,7 @@
  */
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { GatedKind, RunCall, RunState, SkillInjection, SkillSessionState } from "../src/trace/types.js";
 import { jsonl, said, toolResult, toolUse, typed } from "./trace-fixtures.js";
 import { readNewEvents } from "../src/trace/claude.js";
@@ -72,7 +72,8 @@ export function runState(extra: Partial<RunState> = {}): RunState {
 
 /** Made-up checkouts: /home/dev/shop and /home/dev/storefront are repos; anything else is outside git. */
 export const REPOS: Record<string, string> = { "/home/dev/shop": "github.com/acme/shop", "/home/dev/storefront": "github.com/acme/storefront" };
-const rootOf = (p: string) => Object.keys(REPOS).find((r) => p === r || p.startsWith(r + "/")) ?? null;
+/** Compared resolved, so a folder a cd lands in (resolve() gives Windows a drive and '\') still finds its checkout. */
+const rootOf = (p: string) => Object.keys(REPOS).find((r) => resolve(p) === resolve(r) || resolve(p).startsWith(resolve(r) + sep)) ?? null;
 
 export function foldCtx(extra: Partial<FoldContext> = {}): FoldContext {
   return {

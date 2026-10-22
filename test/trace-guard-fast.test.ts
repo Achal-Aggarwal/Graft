@@ -140,7 +140,8 @@ test("timeoutOnPath: a system fixed folder counts too (checked through a stand-i
     try { return (statSync(join(d, "timeout")).mode & 0o111) !== 0 && statSync(join(d, "timeout")).isFile(); } catch { return false; }
   });
   assert.equal(onSystem, direct);
-  assert.equal(timeoutOnPath(empty), direct, "a non-executable file on PATH is not a timeout");
+  // Windows has no exec bit: there any timeout file on PATH counts (Git Bash runs a script with no extension).
+  if (process.platform !== "win32") assert.equal(timeoutOnPath(empty), direct, "a non-executable file on PATH is not a timeout");
 });
 
 test("markDenied: one JSON line per deny, the sha of the rest of the command, 0600, capped at 4 KB", () => {
@@ -156,7 +157,7 @@ test("markDenied: one JSON line per deny, the sha of the rest of the command, 06
   const two = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(two[1].restSha, first[0].restSha, "the rest of the command, normalized");
   assert.ok(!readFileSync(path, "utf8").includes("npm test"), "never the command");
-  assert.equal(statSync(path).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
   for (let i = 0; i < 200; i++) markDenied(sid, `timeout 5 make t${i}`, b.env);
   assert.ok(statSync(path).size <= 4096, `capped: ${statSync(path).size}`);
   assert.deepEqual(readdirSync(b.dir).sort(), ["bin", "home", "trail"], "nothing outside TRAIL_HOME");

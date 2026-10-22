@@ -6,7 +6,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   codexExitOf, codexHome, codexLineEvents, codexMeta, codexTypedSha, isImportedRollout, noteCodexPrompt, readNewCodexEvents, type CodexMeta,
 } from "../src/trace/codex.js";
@@ -48,8 +48,8 @@ test("codexMeta: line 1's facts; a file whose first line isn't session_meta, or 
 });
 
 test("codexHome: CODEX_HOME, else $HOME/.codex", () => {
-  assert.equal(codexHome({ HOME: "/home/dev", CODEX_HOME: "/tmp/x/codex" }), "/tmp/x/codex");
-  assert.equal(codexHome({ HOME: "/home/dev" }), "/home/dev/.codex");
+  assert.equal(codexHome({ HOME: "/home/dev", CODEX_HOME: "/tmp/x/codex" }), resolve("/tmp/x/codex"));
+  assert.equal(codexHome({ HOME: "/home/dev" }), join("/home/dev", ".codex"));
 });
 
 test("codexExitOf: each header form; a header-looking line in the output body is not the exit", () => {
@@ -96,7 +96,7 @@ test("noteCodexPrompt: keyed 16-hex hashes (R7), the last 20, the key 0600 in Tr
   assert.equal(st.codex!.typedShas.at(-1), codexTypedSha("prompt 24", h.env));
   assert.equal(codexTypedSha("  prompt 24\n", h.env), codexTypedSha("prompt 24", h.env), "trimmed");
   assert.equal(JSON.stringify(st).includes("prompt"), false);
-  assert.equal(statSync(join(h.env.TRAIL_HOME!, "state", "typed-key")).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(join(h.env.TRAIL_HOME!, "state", "typed-key")).mode & 0o777, 0o600);
   const other = home();
   noteCodexPrompt(seen(other.env, []), "prompt 24", other.env);
   assert.notEqual(codexTypedSha("prompt 24", other.env), codexTypedSha("prompt 24", h.env), "keyed per home");
@@ -121,7 +121,7 @@ test("calls: exec_command is Bash with its workdir; the older shell forms unwrap
   assert.deepEqual(calls.filter((c) => c.name === "Bash").map((c) => [c.id, cmd(c), c.cwd]), [
     ["c1", "npm run build", "/home/dev/shop"],
     ["c2", "npm test", "/home/dev/shop/packages/cli"],
-    ["c3", "ls", "/home/dev/shop/docs"],
+    ["c3", "ls", resolve("/home/dev/shop/docs")],
     ["c4", "npm view acme-cli version", "/home/dev/shop"],
     ["c5", "git tag v1.4.3 -m 'release 1.4.3'", "/home/dev/shop"],
     ["c6", "git push --tags", "/home/dev/shop"],
@@ -129,7 +129,7 @@ test("calls: exec_command is Bash with its workdir; the older shell forms unwrap
   ]);
   assert.ok(calls.every((c) => c.name !== "Bash" || c.branch === "main"));
   assert.deepEqual(calls.filter((c) => c.name === "Edit").map((c) => [c.id, (c.input as { file_path: string }).file_path]), [
-    ["c8", "/home/dev/shop/src/cart.ts"], ["c8#2", "/home/dev/.trail/state/skills.json"],
+    ["c8", resolve("/home/dev/shop/src/cart.ts")], ["c8#2", "/home/dev/.trail/state/skills.json"],
   ]);
   assert.ok(calls.some((c) => c.id === "c9" && c.name === "update_plan"));
 });

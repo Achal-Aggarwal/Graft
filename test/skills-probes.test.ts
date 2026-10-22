@@ -57,7 +57,8 @@ test("git status never writes the index (optional locks off)", () => {
   assert.equal(existsSync(index) ? statSync(index).mtimeMs : 0, before);
 });
 
-test("command -v looks the program up on PATH; test and [ ] stat the path, $HOME and ~ expanded", async () => {
+test("command -v looks the program up on PATH; test and [ ] stat the path, $HOME and ~ expanded", { skip: process.platform === "win32" }, async () => {
+  // A unix socket, a /tmp folder and a PATH joined with ":" are POSIX only.
   const b = box("stat");
   // A socket path must stay under 104 bytes on macOS: this test's HOME is a short folder of its own.
   const home = mkdtempSync("/tmp/gp-");
@@ -157,7 +158,7 @@ test("cached 10 minutes by checkout and probe, in state/probes.json (0600), no p
   assert.equal(runProbes(s, b.repo, new Date(NOW.getTime() + 11 * 60_000), b.env, { git: counting })[0]?.ok, true, "expired, run again");
   assert.equal(runs, 2);
   const file = join(b.env.TRAIL_HOME!, "state", "probes.json");
-  assert.equal(statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
   const text = readFileSync(file, "utf8");
   assert.ok(!text.includes(b.repo), "the checkout path is hashed");
   assert.ok(JSON.parse(text).entries, "the shape housekeeping prunes");
