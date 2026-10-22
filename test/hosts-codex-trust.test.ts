@@ -26,7 +26,9 @@ function codexHome(): { env: NodeJS.ProcessEnv; home: string; cfg: string } {
   return { env: { HOME: root, CODEX_HOME: home }, home, cfg: join(home, 'config.toml') };
 }
 
-const section = (key: string, body: string) => `[hooks.state."${key}"]\n${body}\n`;
+// A key quoted as Codex writes it, a TOML basic string: a Windows path's backslashes are escaped.
+const q = (key: string) => JSON.stringify(key);
+const section = (key: string, body: string) => `[hooks.state.${q(key)}]\n${body}\n`;
 const HASH = 'trusted_hash = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"';
 
 test("Trail's keys are the hooks.json path, the event's Codex label and the indexes, one per Trail handler", () => {
@@ -71,7 +73,7 @@ test('a trust record for each Trail entry: trusted; one missing or turned off: u
 test('the inline form under [hooks.state] reads the same', () => {
   const { env, cfg } = codexHome();
   const keys = trailHookKeys(env);
-  writeFileSync(cfg, `[hooks.state]\n${keys.map((k) => `"${k}" = { ${HASH} }`).join('\n')}\n\n[features]\nhooks = true\n`);
+  writeFileSync(cfg, `[hooks.state]\n${keys.map((k) => `${q(k)} = { ${HASH} }`).join('\n')}\n\n[features]\nhooks = true\n`);
   assert.deepEqual(codexTrust(env), { state: 'trusted', untrusted: [] });
 });
 
@@ -81,7 +83,7 @@ test("a key form Trail doesn't know, a trust line it can't place, or no hooks.js
   assert.equal(codexTrust(env).state, 'unknown');
   writeFileSync(cfg, `[hooks]\nstate."x".trusted_hash = "sha256:00"\n`);
   assert.equal(codexTrust(env).state, 'unknown');
-  writeFileSync(cfg, `${section(`${home}/hooks.json:stop:0:0`, HASH)}[hooks.state."${home}/hooks.json:pre_tool_use:0:0"]\ntrusted_hash = 7\n`);
+  writeFileSync(cfg, `${section(`${home}/hooks.json:stop:0:0`, HASH)}[hooks.state.${q(`${home}/hooks.json:pre_tool_use:0:0`)}]\ntrusted_hash = 7\n`);
   assert.equal(codexTrust(env).state, 'unknown', 'a hash that is not a string');
   rmSync(join(home, 'hooks.json'));
   assert.equal(codexTrust(env).state, 'unknown');
