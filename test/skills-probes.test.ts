@@ -10,7 +10,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpRepo } from "./helpers.js";
-import { probePassWords, runProbes } from "../src/skills/probes.js";
+import { probePassWords, readyProbes, runProbes } from "../src/skills/probes.js";
 import { cand, shipSkill } from "./skills-recall-fixtures.js";
 
 const NOW = new Date("2026-10-20T10:00:00.000Z");
@@ -27,11 +27,21 @@ function box(tag: string) {
 }
 const skillWith = (ready: string) => cand(shipSkill({ ready })).skill;
 const byProbe = (rs: ReturnType<typeof runProbes>) => Object.fromEntries(rs.map((r) => [r.probe, r]));
+/**
+ * Every probe's result. A probe not done in the 300 ms is left out (by design), and on Windows five git spawns don't
+ * fit in one call; the next call takes the done ones from the cache and runs the rest.
+ */
+function allProbes(...args: Parameters<typeof runProbes>): ReturnType<typeof byProbe> {
+  const want = readyProbes(args[0]).length;
+  let r = byProbe(runProbes(...args));
+  for (let i = 0; i < 5 && Object.keys(r).length < want; i++) r = byProbe(runProbes(...args));
+  return r;
+}
 
 test("git probes: clean tree, the on-branch probe, a ref that exists or not", () => {
   const b = box("git");
   const ready = "git status --porcelain ; git rev-parse --abbrev-ref HEAD = main ; git rev-parse --abbrev-ref HEAD = beta ; git rev-parse --verify main ; git rev-parse --verify nope";
-  let r = byProbe(runProbes(skillWith(ready), b.repo, NOW, b.env));
+  let r = allProbes(skillWith(ready), b.repo, NOW, b.env);
   assert.equal(r["git status --porcelain"]?.ok, true);
   assert.equal(r["git rev-parse --abbrev-ref HEAD = main"]?.ok, true);
   assert.deepEqual(r["git rev-parse --abbrev-ref HEAD = beta"], {
