@@ -60,6 +60,7 @@ import { listSessionIds, readSession, sessionDir } from "./claude/state.js";
 import { costLabel, listNotes, noteName, notePlace, noteTargets, readingTokens, savedByNote, commitLines, PERSONAL_SAVED_LINE, PR_SPEEDUP, SECTIONS, tokensWorthSaying, sectionLead, shortDate, tokensLabel, writeNote, type Note, mentionedFiles } from "./notes/notes.js";
 import { aboutTerms, currentSessionCost } from "./notes/session-cost.js";
 import { beginPastRead, finishPastRead, type Finding } from "./notes/cold-start.js";
+import type { SavedSkill } from "./skills/found-skill.js";
 import { beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/pr-reviews.js";
 import { finishPair, PairRun, validPairCode } from "./cloud/pair.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
@@ -1720,6 +1721,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // Under trail: what init learned from past sessions and PR reviews, where
     // this repo's learnings are, and how many there already are.
     let learnedNow = false;
+    let skillsWritten: SavedSkill[] = [];
     if (TRAIL && (pastRead || reviewRead)) {
       if (pastRead && !pastRead.done) console.error("· still reading your past sessions…");
       const fromSessions = pastRead ? (await pastRead.result).findings : [];
@@ -1745,8 +1747,13 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const learnedFrom: Array<{ note: Note; sessions?: number }> = [];
       let sessionsRead = 0;
       if (pastRead) {
-        const { result, saved, kept, cancelled } = await finishPastRead(repo, pastRead, keepFrom<Finding>(0));
+        const { result, saved, kept, skills, cancelled } = await finishPastRead(repo, pastRead, keepFrom<Finding>(0));
         sessionsRead = result.read ?? 0;
+        skillsWritten = skills;
+        for (const { skill, path } of skills) {
+          console.error(`✓ wrote a skill from a procedure you walked Claude through more than once: ${skill.title}`);
+          console.error(`    ${skill.for === "team" ? "for your team" : "just for you "} · ${path}`);
+        }
         saved.forEach((note, i) => learnedFrom.push({ note, sessions: kept[i]?.sessions.length }));
         const offered = result.findings.length;
         if (saved.length) {
@@ -1862,7 +1869,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const teammates = teammatesFromGit(repo, { learnings: teamNotes });
       pair.phase("team", "done", `${teammates.length} ${teammates.length === 1 ? "person" : "people"}`);
       pair.findings({ tokens, sessions: pastRead?.sessions, teammates });
-      await pair.finish(repo);
+      await pair.finish(repo, skillsWritten);
       pair.handOff(repo);
       console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);
       if (!process.stdout.isTTY) console.error(`[trail] Tell the user, in one line: their Trail page has moved on; review what Trail found there. If it isn't open, the link is ${pair.url}`);

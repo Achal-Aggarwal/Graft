@@ -309,7 +309,7 @@ function found(title: string, forWho: "team" | "you"): Finding {
 }
 
 function readWith(findings: Finding[]) {
-  const result: FindResult = { sessions: 3, read: 3, findings, model: "claude-sonnet-5-5", durationMs: 10 };
+  const result: FindResult = { sessions: 3, read: 3, findings, skills: [], model: "claude-sonnet-5-5", durationMs: 10 };
   return { sessions: 3, started: Date.now(), done: true, result: Promise.resolve(result) };
 }
 

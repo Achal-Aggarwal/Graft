@@ -20,6 +20,8 @@ import { track } from "../telemetry/track.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 import { noteAuthor } from "./git-facts.js";
 import { ensureRepoHome } from "./home.js";
+import { saveFoundSkill, type FoundSkill, type SavedSkill } from "../skills/found-skill.js";
+import { OWN_SKILLS, skillName } from "../skills/skills.js";
 import { mentionedFiles, shortDate, writeNote, type Note } from "./notes.js";
 import { claudeProjectDir } from "./session-cost.js";
 
@@ -57,6 +59,8 @@ export interface FindResult {
   /** How many of them, newest first, Claude read. */
   read: number;
   findings: Finding[];
+  /** Procedures the person walked Claude through in 2+ sessions, at most {@link MAX_SKILLS}. */
+  skills: FoundSkill[];
   model: string;
   durationMs: number;
   costUsd?: number;
@@ -69,6 +73,7 @@ export const COLD_START_MODEL = "claude-sonnet-5-5";
 /** About 80k tokens of messages: every session assign has, and newest first past that. */
 const DIGEST_CHARS = 320_000;
 const PROMPT_CHARS = 1200;
+const MAX_SKILLS = 2;
 const BEFORE_CHARS = 240;
 
 /* -------------------------------------------------------------------------- */
@@ -286,7 +291,22 @@ For each finding:
 - body: 2 to 5 lines of markdown under "## Decided" (the rule, and why when the messages say why), plus "## Watch out" only when there's a real trap. Plain words, written to the next session. Call the person "the user", never he or she. Leave out insults and swearing, even when the messages have them. Nothing secret: no tokens, passwords, keys, email addresses or customer names.
 - evidence: 2 to 4 items, each the session id from the "=== session <id>" header and a quote copied exactly from a [user] line in that session, 4 to 20 words.
 
-Return an empty list when nothing comes up in two sessions. Fewer good findings beat more weak ones.`;
+Return an empty list when nothing comes up in two sessions. Fewer good findings beat more weak ones.
+
+Separately, return at most 2 skills. A skill is a procedure of 2 or more steps that the person walked the agent through in 2 or more different sessions, in the same order each time (cutting a release, regenerating a fixture, deploying to staging). It is not a rule or a preference; those are findings. For each skill:
+- name: a verb phrase of 2 to 5 words, like "cut a release".
+- title: under 60 characters, what the procedure does, in plain words.
+- for: "team" when anyone working in the repo would follow it; "you" when it is about this person's own machine or habits.
+- steps: 2 to 8 items in order, each a command or an action, written to the next session. Nothing secret: no tokens, passwords, keys, email addresses or customer names. Call the person "the user".
+- evidence: 2 to 4 items, each the session id from the "=== session <id>" header and a quote copied exactly from a [user] line in that session where they walked the agent through it, 4 to 20 words.
+Return an empty skills list when no procedure came up in two sessions.`;
+
+const EVIDENCE = {
+  type: "object",
+  properties: { session: { type: "string" }, quote: { type: "string" } },
+  required: ["session", "quote"],
+  additionalProperties: false,
+} as const;
 
 const SCHEMA = {
   type: "object",
@@ -299,22 +319,29 @@ const SCHEMA = {
           title: { type: "string" },
           for: { type: "string", enum: ["team", "you"] },
           body: { type: "string" },
-          evidence: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { session: { type: "string" }, quote: { type: "string" } },
-              required: ["session", "quote"],
-              additionalProperties: false,
-            },
-          },
+          evidence: { type: "array", items: EVIDENCE },
         },
         required: ["title", "for", "body", "evidence"],
         additionalProperties: false,
       },
     },
+    skills: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          title: { type: "string" },
+          for: { type: "string", enum: ["team", "you"] },
+          steps: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 8 },
+          evidence: { type: "array", items: EVIDENCE, minItems: 2, maxItems: 4 },
+        },
+        required: ["name", "title", "for", "steps", "evidence"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["findings"],
+  required: ["findings", "skills"],
   additionalProperties: false,
 } as const;
 
@@ -322,6 +349,14 @@ interface RawFinding {
   title?: string;
   for?: string;
   body?: string;
+  evidence?: { session?: string; quote?: string }[];
+}
+
+interface RawSkill {
+  name?: string;
+  title?: string;
+  for?: string;
+  steps?: string[];
   evidence?: { session?: string; quote?: string }[];
 }
 
@@ -378,7 +413,8 @@ export function hasClaude(home?: string): boolean {
  * shows up as a past session), from a scratch folder so no repo's CLAUDE.md or
  * hooks load. `TRAIL_NO_HOOKS` keeps trail's own user-level hooks quiet too.
  * Past sessions by default; the PR review read brings its own system prompt
- * and schema, with `findings` at the top.
+ * and schema, with `findings` at the top. `skills` comes back when the schema
+ * has them.
  */
 export function askClaude<T = RawFinding>(
   bin: string,
@@ -386,7 +422,7 @@ export function askClaude<T = RawFinding>(
   model: string,
   timeoutMs: number,
   ask: { system: string; schema: object } = { system: SYSTEM, schema: SCHEMA },
-): Promise<{ findings: T[]; costUsd?: number } | null> {
+): Promise<{ findings: T[]; skills: RawSkill[]; costUsd?: number } | null> {
   return new Promise((done) => {
     const args = [
       "-p",
@@ -416,9 +452,9 @@ export function askClaude<T = RawFinding>(
     child.on("close", () => {
       clearTimeout(timer);
       try {
-        const r = JSON.parse(out) as { is_error?: boolean; structured_output?: { findings?: T[] }; total_cost_usd?: number };
+        const r = JSON.parse(out) as { is_error?: boolean; structured_output?: { findings?: T[]; skills?: RawSkill[] }; total_cost_usd?: number };
         if (r.is_error || !r.structured_output) return done(null);
-        done({ findings: r.structured_output.findings ?? [], costUsd: r.total_cost_usd });
+        done({ findings: r.structured_output.findings ?? [], skills: r.structured_output.skills ?? [], costUsd: r.total_cost_usd });
       } catch {
         done(null);
       }
@@ -498,6 +534,35 @@ export function verify(raw: RawFinding[], sessions: PastSession[], ids: Map<stri
   return out.sort((a, b) => b.sessions.length - a.sessions.length || b.last.localeCompare(a.last));
 }
 
+/**
+ * The skills whose quotes are really in the person's messages, in two or more
+ * sessions, at most {@link MAX_SKILLS}, the ones said in the most sessions
+ * first. A skill needs a name, 2 to 8 steps and a place that's its own (not
+ * trail's or graft's skill); its title and steps are scrubbed.
+ */
+export function verifySkills(raw: RawSkill[], sessions: PastSession[], ids: Map<string, string>): FoundSkill[] {
+  const sources = sessions.map((s) => ({ id: s.id, at: s.at, said: s.prompts.map((p) => norm(p.text)) }));
+  const byId = new Map(sources.map((x) => [x.id, x]));
+  const out: FoundSkill[] = [];
+  const seen = new Set<string>();
+  for (const f of raw) {
+    const title = scrub(f.title?.replace(/\s+/g, " ").trim() ?? "").slice(0, 80);
+    const name = skillName(f.name?.trim() || title);
+    if (!title || !name || OWN_SKILLS.has(name) || seen.has(name)) continue;
+    const steps = (f.steps ?? [])
+      .map((s) => scrub((typeof s === "string" ? s : "").replace(/\s*\n\s*/g, " ").replace(/^\s*(?:\d+[.)]|[-*])\s+/, "").trim()))
+      .filter(Boolean);
+    if (steps.length < 2 || steps.length > 8) continue;
+    const evidence = (f.evidence ?? []).map((ev) => ({ cited: byId.get(ids.get(ev.session?.trim() ?? "") ?? ""), quote: ev.quote }));
+    const { places, quotes } = placeQuotes(evidence, sources);
+    if (places.length < 2) continue;
+    seen.add(name);
+    out.push({ name, title, for: f.for === "you" ? "you" : "team", steps, sessions: places.map((s) => s.id), quotes });
+  }
+  const last = (s: FoundSkill) => sources.find((x) => x.id === s.sessions[0])?.at ?? "";
+  return out.sort((a, b) => b.sessions.length - a.sessions.length || last(b).localeCompare(last(a))).slice(0, MAX_SKILLS);
+}
+
 /** Anything that looks like a credential, a key or an email address, replaced. Learnings get committed. */
 export function scrub(text: string): string {
   return text
@@ -527,7 +592,7 @@ export async function findLearnings(
   const model = opts.model ?? COLD_START_MODEL;
   const started = Date.now();
   const sessions = opts.sessions ?? pastSessions(repo, opts.home);
-  const base = { sessions: sessions.length, read: 0, model, findings: [] as Finding[] };
+  const base = { sessions: sessions.length, read: 0, model, findings: [] as Finding[], skills: [] as FoundSkill[] };
   if (sessions.length < 2) return { ...base, durationMs: Date.now() - started, reason: "no_sessions" };
   const bin = claudeBin(opts.home);
   if (!bin) return { ...base, durationMs: Date.now() - started, reason: "no_claude" };
@@ -535,14 +600,15 @@ export async function findLearnings(
   base.read = ids.size;
   const asked = await askClaude(
     bin,
-    `Past sessions in this repository, newest first. Find what the person had to tell the agent more than once.\n\n${text}`,
+    `Past sessions in this repository, newest first. Find what the person had to tell the agent more than once, and any procedure they walked the agent through in more than one session.\n\n${text}`,
     model,
     opts.timeoutMs ?? 180_000,
   );
   const durationMs = Date.now() - started;
   if (!asked) return { ...base, durationMs, reason: "failed" };
   const findings = verify(asked.findings, sessions, ids).slice(0, opts.limit ?? 5);
-  return { ...base, findings, durationMs, costUsd: asked.costUsd, reason: findings.length ? undefined : "none_found" };
+  const skills = verifySkills(asked.skills, sessions, ids);
+  return { ...base, findings, skills, durationMs, costUsd: asked.costUsd, reason: findings.length || skills.length ? undefined : "none_found" };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -603,6 +669,19 @@ export function saveFindings(repo: string, findings: Finding[], author = noteAut
   );
 }
 
+/** Each found skill as a SKILL.md: the team's in the repo, the person's own in ~/.trail. One that can't be written is skipped. */
+export function saveSkills(repo: string, skills: FoundSkill[]): SavedSkill[] {
+  const out: SavedSkill[] = [];
+  for (const skill of skills) {
+    try {
+      out.push({ skill, path: saveFoundSkill(repo, skill) });
+    } catch {
+      /* read-only checkout, say: the learnings still saved */
+    }
+  }
+  return out;
+}
+
 /**
  * Wait for the read, save the findings the person keeps, and remember the repo
  * was read. Every finding is kept unless `keep` picks; `keep` resolving null
@@ -612,13 +691,16 @@ export async function finishPastRead(
   repo: string,
   read: PastRead,
   keep?: (findings: Finding[]) => Promise<Finding[] | null>,
-): Promise<{ result: FindResult; saved: Note[]; kept: Finding[]; cancelled: boolean }> {
+): Promise<{ result: FindResult; saved: Note[]; kept: Finding[]; skills: SavedSkill[]; cancelled: boolean }> {
   const result = await read.result;
   const chosen = result.findings.length && keep ? await keep(result.findings) : result.findings;
   const kept = chosen ?? [];
   const saved = kept.length ? saveFindings(repo, kept) : [];
-  const outcome = chosen === null ? "cancelled" : result.findings.length ? "found" : (result.reason ?? "none_found");
-  if (outcome === "found" || outcome === "none_found") writeJsonAtomic(readMark(repo), { at: Date.now(), model: result.model, saved: saved.length }, true);
+  // Skills aren't in the pick: they're written unless the person cancelled, and never over one that exists.
+  const skills = chosen === null ? [] : saveSkills(repo, result.skills);
+  const found = result.findings.length > 0 || result.skills.length > 0;
+  const outcome = chosen === null ? "cancelled" : found ? "found" : (result.reason ?? "none_found");
+  if (outcome === "found" || outcome === "none_found") writeJsonAtomic(readMark(repo), { at: Date.now(), model: result.model, saved: saved.length, skills: skills.length }, true);
   track(
     "cold_start",
     {
@@ -632,5 +714,5 @@ export async function finishPastRead(
     },
     { repo },
   );
-  return { result, saved, kept, cancelled: chosen === null };
+  return { result, saved, kept, skills, cancelled: chosen === null };
 }

@@ -13,9 +13,14 @@
  * dropped.
  */
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { graftCliPath } from "../claude/paths.js";
 import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
+import type { SavedSkill } from "../skills/found-skill.js";
+import { skillName } from "../skills/skills.js";
+import { matter } from "../util/front-matter.js";
 import { newState, pickerRepos } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, learningsPayload, syncRepo } from "./workspace-sync.js";
@@ -44,6 +49,27 @@ export interface PairFindings {
   tokens?: TokensSummary | null;
   sessions?: number;
   teammates?: TeammateSummary[];
+}
+
+/** One team skill as a found item, or nothing when its file can't be read. */
+function foundSkillItem(checkout: string, s: SavedSkill): Record<string, unknown>[] {
+  let text: string;
+  try {
+    text = readFileSync(s.path, "utf8");
+  } catch {
+    return [];
+  }
+  return [
+    {
+      kind: "skill",
+      path: `.claude/skills/${skillName(s.skill.name)}/SKILL.md`,
+      title: s.skill.title,
+      author: noteAuthor(checkout),
+      body: matter(text).content.trim(),
+      hash: createHash("sha256").update(text).digest("hex"),
+      touches: [],
+    },
+  ];
 }
 
 /** The most found learnings one progress call may carry. */
@@ -117,13 +143,21 @@ export class PairRun {
     this.send({ findings: out });
   }
 
-  /** Hand over the repo's learnings for review, then say the read is done. */
-  finish(repo: string): Promise<void> {
+  /**
+   * Hand over the repo's learnings, and the skills init just wrote for the
+   * team, for review, then say the read is done. A learning is a `decision`;
+   * a skill is a `skill`. A skill kept for the person alone isn't the team's
+   * to review, so it stays off the page.
+   */
+  finish(repo: string, skills: SavedSkill[] = []): Promise<void> {
     const place = repoPlace(repo);
-    const found = place.git
-      ? learningsPayload(place.checkout)
-          .filter((l) => l.ref === "")
-          .map((l) => ({ path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches }))
+    const found: Record<string, unknown>[] = place.git
+      ? [
+          ...learningsPayload(place.checkout)
+            .filter((l) => l.ref === "")
+            .map((l) => ({ kind: "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches })),
+          ...skills.filter((s) => s.skill.for === "team").flatMap((s) => foundSkillItem(place.checkout, s)),
+        ]
       : [];
     const n = found.length;
     this.phases = this.phases.map((p) => (p.status === "done" ? p : { ...p, status: "done" as const }));

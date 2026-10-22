@@ -24,7 +24,7 @@ import { shortDate, slug } from "../notes/notes.js";
 import { ensureRepoHome, repoPlace } from "../notes/home.js";
 
 /** Trail's and graft's own skills, rewritten by every `init`: never a place for takeaways. */
-const OWN_SKILLS = new Set(["trail", "graft"]);
+export const OWN_SKILLS =new Set(["trail", "graft"]);
 
 /** Where a repo's skills are: the team's in the repo, and this machine's in ~/.trail. */
 export function skillDirs(dir: string): { repo: string; home: string } {

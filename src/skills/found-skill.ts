@@ -1,0 +1,58 @@
+/**
+ * A skill found in past sessions: a procedure the person walked Claude through
+ * in two or more of them, written to a SKILL.md at `trail init` so the next
+ * session can follow it without being walked through it again.
+ *
+ * The team's go in the repo's `.claude/skills/`, where Claude Code loads them
+ * for everyone who pulls; the person's own go in this repo's skills under
+ * ~/.trail. A skill of that name that already exists is never touched.
+ */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ensureRepoHome } from "../notes/home.js";
+import { skillDirs, skillName } from "./skills.js";
+
+export interface FoundSkill {
+  name: string;
+  title: string;
+  /** `team`: written into the repo. `you`: kept on this machine. */
+  for: "team" | "you";
+  /** What to do, in order: 2 to 8 commands or actions. */
+  steps: string[];
+  /** Sessions the cited quotes were found in, newest first. */
+  sessions: string[];
+  quotes: string[];
+}
+
+/** A skill as written: where its SKILL.md is, whether this run wrote it or it was there already. */
+export interface SavedSkill {
+  skill: FoundSkill;
+  path: string;
+}
+
+/** SKILL.md for a found skill: the frontmatter every skill has, then its steps as a numbered list. */
+export function renderFoundSkill(s: FoundSkill): string {
+  const name = skillName(s.name);
+  const steps = s.steps.map((step, i) => `${i + 1}. ${step}`).join("\n");
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(s.title)}\nversion: 1\n---\n\n# ${s.title}\n\n${steps}\n`;
+}
+
+/**
+ * Write the skill, and return the path of its SKILL.md. A skill of that name
+ * the repo or this machine already has is left as it is: its path comes back.
+ */
+export function saveFoundSkill(repo: string, s: FoundSkill): string {
+  const name = skillName(s.name);
+  if (!name) throw new Error("a skill needs a name");
+  const dirs = skillDirs(repo);
+  for (const d of [dirs.repo, dirs.home]) {
+    const there = join(d, name, "SKILL.md");
+    if (existsSync(there)) return there;
+  }
+  if (s.for === "you") ensureRepoHome(repo);
+  const dir = join(s.for === "you" ? dirs.home : dirs.repo, name);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "SKILL.md");
+  writeFileSync(file, renderFoundSkill(s));
+  return file;
+}
