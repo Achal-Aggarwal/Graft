@@ -43,6 +43,14 @@ export function ownPath(p: string): boolean {
   return /^(graft|\.graft|\.claude|\.cursor|\.codex|\.trail)(\/|$)/.test(p) || p === ".mcp.json" || p === ".gitignore" || p === ".ignore";
 }
 
+/** Files the agent instructions live in: trail writes them, so editing them is setting trail up. */
+const AGENT_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md"]);
+
+/** A repo path that is trail's or the agents' own (`ownPath`, plus AGENTS.md and the like): never what a learning is about. */
+export function trailOwnPath(p: string): boolean {
+  return ownPath(p) || AGENT_FILES.has(p);
+}
+
 /**
  * Files this session changed: uncommitted changes, plus files in commits made
  * since `since` (epoch ms). At most `limit`, in the order git lists them.

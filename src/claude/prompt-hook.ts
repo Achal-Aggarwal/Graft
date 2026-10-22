@@ -255,6 +255,8 @@ export function promptWords(raw: unknown): string {
  * person typed.
  */
 export async function handlePrompt(input: any, dir: string, opts: { budgetMs?: number } = {}): Promise<void> {
+  // Background completion notices are machine events, not user queries: no skills answer, no ask (#551).
+  if (String(input?.prompt ?? '').trimStart().startsWith('<task-notification>')) return;
   const deadline = Date.now() + (opts.budgetMs ?? PROMPT_BUDGET_MS);
   const skills = await promptPart(input, dir);
   if (skills.block) return void emitHook('UserPromptSubmit', { block: skills.block });

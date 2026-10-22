@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { readWiring } from './stats.js';
 import { formatBlastRadius, formatOrientation, notesOnTouch, standingDirective, teamNotesDirective, type Touch } from './format.js';
 import { commitLines, listNotes, setupCommitLine, standingLearnings } from '../notes/notes.js';
+import { liveLearnings } from '../notes/learning-fields.js';
 import { noteAuthor, teammatesOn } from '../notes/git-facts.js';
 import { indexFreshness, staleBanner } from '../context/check.js';
 import { dropStoredPrompts, patchStats, readSession, writeSession, resolveContextDir } from './state.js';
@@ -39,7 +40,6 @@ import { trailNow } from '../skills/settings.js';
 import { keptContext, keptNotice } from './start-init.js';
 
 export { lastFileScopeHint, promptAskTimeout } from './prompt-hook.js';
-export { NOTE_ASK, NOTE_WORTHY_CALLS, NOTE_WORTHY_TOKENS, turnWantsNote } from './note-ask.js';
 
 function readStdin(): any {
   const seam = process.env.GRAFT_TEST_STDIN;
@@ -176,7 +176,7 @@ export function learningsOnTouch(input: any, dir: string): string | null {
     } else if (typeof ti.command === 'string' && ti.command && !commandInvokesGraft(ti.command)) {
       touch = { command: ti.command };
     } else return null;
-    const notes = listNotes(dir, { branches: false });
+    const notes = liveLearnings(listNotes(dir, { branches: false }));
     if (!notes.length) return null;
     const id = payloadSessionId(input);
     const s = readSession(dir, id);
@@ -279,7 +279,7 @@ export function trackRepoSeen(dir: string, now = Date.now()): void {
     const mark = join(cacheDir(place.checkout), 'trail-repo-seen.json');
     if (now - (readJson<{ at?: number }>(mark)?.at ?? 0) < DAY_MS) return;
     writeJsonAtomic(mark, { at: now }, true);
-    const tracked = execFileSync('git', ['ls-files', '--', '.trail'], { cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+    const tracked = execFileSync('git', ['ls-files', '--', '.trail'], { cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true });
     track(
       'repo_seen',
       { trail_committed: String(tracked.trim().length > 0), learnings_bucket: countBucket(learningFiles(place.checkout).length), workspace: String(inWorkspace(place.checkout)) },
@@ -302,7 +302,7 @@ export function trackLearningsCommitted(dir: string): void {
     const place = repoPlace(dir);
     if (!place.git) return;
     const listed = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', '.trail/learnings'], {
-      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true,
     });
     const count = listed.split('\n').filter((f) => f.endsWith('.md')).length;
     const mark = join(cacheDir(place.checkout), 'trail-learnings-committed.json');
@@ -331,7 +331,7 @@ export function uncommittedDirective(dir: string, now = Date.now()): string {
     const place = repoPlace(dir);
     if (!place.git) return '';
     const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', '.trail/learnings'], {
-      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+      cwd: place.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true,
     });
     const n = status.split('\n').filter((l) => l.trimEnd().endsWith('.md')).length;
     const setup = setupUncommitted(place.checkout);
@@ -358,7 +358,7 @@ export function uncommittedDirective(dir: string, now = Date.now()): string {
  */
 export function setupUncommitted(checkout: string): boolean {
   if (!existsSync(join(checkout, '.trail', 'hook.cjs'))) return false;
-  const git = (args: string[]) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+  const git = (args: string[]) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true });
   try {
     git(['ls-files', '--error-unmatch', '--', '.trail/hook.cjs']);
   } catch {

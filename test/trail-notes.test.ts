@@ -287,8 +287,7 @@ test("trail init makes the repo's .trail/learnings/ and says to commit it; graft
   const d = repoWithCode();
   const t = run("trail", ["init", d, "--agents", "claude", "--yes", "--no-global"], home);
   assert.equal(t.status, 0, t.err);
-  assert.match(t.err, /✓ learnings {2}\.trail\/learnings\/ · ask Claude to save a learning and it's added to this repo/);
-  assert.doesNotMatch(t.err, /real digging/, "nothing is saved without the person asking");
+  assert.match(t.err, /✓ learnings {2}\.trail\/learnings\/ · a session that fixes a bug, takes a correction or opens a PR leaves one there, for your whole team/);
   assert.match(t.err, /· commit \.claude\/settings\.json and \.trail\/ once: after that, teammates' Claude reads your learnings even before they install trail/);
   assert.ok(existsSync(join(d, ".trail", "learnings")));
   assert.match(readFileSync(join(d, ".trail", "README.md"), "utf8"), /^# \.trail/);
@@ -323,8 +322,8 @@ test("trail note saves a learning in .trail/learnings/ to commit, ask shows it t
   );
   assert.match(
     saved.out,
-    /\[trail\] Close your reply with one line, word for word\. If this learning is committed by the end of your turn: 📝 Committed · Anay works in this part of the codebase, and their agents now get to a PR 3x faster\n  If it isn't: 🌱 Anay works in this part of the codebase\. Commit what you learned and their agents get to a PR 3x faster$/m,
-    "the closing lines, for the agent's reply",
+    /\[trail\] Close your reply with one line, word for word\. If this learning is committed by the end of your turn: 📝 Committed · Anay works in this part of the codebase, and their agents now get to a PR 3x faster\n  If it isn't: 📝 Learning: "Bbox coordinates are off on rotated PDFs" · your teammates' Claude reads it when they open bbox\.go\. Commit it with this change\? \(y\/n\)\n  On a yes, commit it with the change: in the change's own commit when that isn't pushed yet\.$/m,
+    "the closing lines, for the agent's reply: committed, or the ask to commit it",
   );
   const [file] = readdirSync(join(d, ".trail", "learnings")).filter((f) => f.endsWith(".md"));
   const written = parseNote(readFileSync(join(d, ".trail", "learnings", file!), "utf8"), "x");
@@ -404,16 +403,20 @@ test("the trail skill's description names when to use its commands, and the body
   assert.ok(data.description.length <= 1024, "skill descriptions are capped at 1,024 characters");
   assert.match(data.description, /ANY task in this repo/);
   assert.match(data.description, /trail ask before grepping/);
-  assert.match(data.description, /Save a learning with trail note only when the\s+user asks you to, never on your own, and commit it with the change/);
-  assert.doesNotMatch(data.description, /real digging/, "nothing tells the agent to save one unprompted");
+  assert.match(data.description, /When the session finds what the code can't tell\s+the next person/);
+  assert.match(data.description, /save a learning with trail note and commit it with the change/);
   assert.match(data.description, /\.trail\/learnings\//, "where the learnings are, for a Claude without trail");
   assert.match(data.description, /npm install -g @trailhq\/trail/, "and how to get the command");
   assert.doesNotMatch(data.description, /graft/, "nothing about the old name or the graft\/ folder");
   const moments = content.indexOf("## When to reach for trail");
   assert.ok(moments >= 0 && moments < content.indexOf("## The tools"), "the moments come before the tool docs");
-  assert.match(content, /\*\*When the user asks you to save something\*\*/);
-  assert.match(content, /Never save\s+one on your own, and don't offer to/);
-  assert.doesNotMatch(content, /real digging|\*\*When the user corrects/, "a correction is saved only when they ask, like anything else");
+  assert.match(content, /\*\*When the session finds what the code can't tell the next person\*\*/);
+  assert.match(data.description, /the user correcting how something is done\s+here/);
+  const saving = content.indexOf("## Saving a learning");
+  assert.ok(saving > moments && saving < content.indexOf("## The tools"), "what to save comes before the tool docs");
+  assert.match(content, /Good, `--title "CodeQL init and analyze must share a version"`/, "one good example");
+  assert.match(content, /Bad, `--title "Finishing the rollout PR"`/, "and one bad one");
+  assert.match(content, /\*\*When the user corrects how something is done here\*\*/);
 });
 
 test("the session-start directive mentions learnings only in a repo that keeps them", async () => {
@@ -423,13 +426,12 @@ test("the session-start directive mentions learnings only in a repo that keeps t
   assert.match(some, /This repo has 3 learnings from past sessions/);
   assert.match(some, /📝 Started from Priya's learning, adding what it saved \(· saved ~90k tokens and ~12 min\) only when (trail|graft) prints that with it/, "the closing line, by example");
   assert.doesNotMatch(some, /3x faster/, "no value claim by example");
-  assert.match(some, /Save a learning only when the user asks you to/);
-  assert.match(some, /never on your own, and don't offer to/);
-  assert.doesNotMatch(some, /real digging|corrects how something is done/);
+  assert.match(some, /Save a learning when the session finds what the code can't tell the next person/);
+  assert.match(some, /never for setting up trail, status, or what the diff shows/);
   assert.match(some, /commit it with the change/);
   const none = formatOrientation("# map", 100, undefined, 0, true);
   assert.doesNotMatch(none, /This repo has/);
-  assert.match(none, /Save a learning only when the user asks you to/, "a repo set up for learnings is told how to save one from the first session");
+  assert.match(none, /Save a learning when the session finds/, "a repo set up for learnings is told to leave one from the first session");
 });
 
 test("hooks speak trail only in a repo wired for it, on a machine with trail installed", async () => {
@@ -523,7 +525,10 @@ test("nothing tells the agent to save a learning on its own after a check confli
     if (saved === undefined) delete process.env.TRAIL_INVOKED_AS;
     else process.env.TRAIL_INVOKED_AS = saved;
   }
-  for (const [where, text] of [["skill", skillTemplate("trail")], ["session directive", directive]] as const) {
+  // The skill's check-conflict text is #663's (D184): it says to save a new learning with --replaces. The session
+  // directive's trail check line is part 6's, and still waits for the user.
+  void skillTemplate;
+  for (const [where, text] of [["session directive", directive]] as const) {
     assert.doesNotMatch(text.replace(/\s+/g, " "), /and save a new learning/, where);
     assert.match(text.replace(/\s+/g, " "), /If the user asks you to save what changed, save it as a new learning/, where);
   }
