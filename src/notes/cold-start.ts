@@ -19,7 +19,7 @@ import { countBucket, durationBucket } from "../telemetry/contract.js";
 import { track } from "../telemetry/track.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 import { noteAuthor } from "./git-facts.js";
-import { ensureRepoHome } from "./home.js";
+import { ensureRepoHome, remoteKey } from "./home.js";
 import { mentionedFiles, shortDate, writeNote, type Note } from "./notes.js";
 import { claudeProjectDir } from "./session-cost.js";
 
@@ -92,6 +92,41 @@ export function repoRoots(repo: string): string[] {
   if (common && basename(common) === ".git") roots.add(dirname(common));
   for (const line of git(repo, ["worktree", "list", "--porcelain"]).split("\n")) {
     if (line.startsWith("worktree ")) roots.add(line.slice("worktree ".length));
+  }
+  return [...roots];
+}
+
+/**
+ * {@link repoRoots}, plus every other checkout on this machine whose remote is
+ * the same repo: a fresh clone at `~/trail-demo/me` of github.com/acme/api
+ * finds the sessions and Claude memory of `~/src/api`. Claude Code keeps each
+ * project's folder under ~/.claude/projects; each folder's first transcript
+ * says where it ran, and that folder's git config names its remote.
+ */
+export function sameRepoRoots(repo: string, home: string = homedir()): string[] {
+  const roots = new Set(repoRoots(repo));
+  const mine = remoteKey(repo)?.key;
+  if (!mine) return [...roots];
+  const projects = join(home, ".claude", "projects");
+  let dirs: string[];
+  try {
+    dirs = readdirSync(projects);
+  } catch {
+    return [...roots];
+  }
+  const seen = new Set<string>();
+  for (const d of dirs) {
+    let first: string | undefined;
+    try {
+      first = readdirSync(join(projects, d)).find((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    const cwd = first ? firstCwd(join(projects, d, first)) : null;
+    if (!cwd || seen.has(cwd)) continue;
+    seen.add(cwd);
+    const found = existsSync(cwd) ? remoteKey(cwd) : null;
+    if (found?.key === mine) roots.add(found.checkout);
   }
   return [...roots];
 }
@@ -236,7 +271,7 @@ export function readSession(path: string): PastSession | null {
 
 /** Every past session of the repo with something the person wrote, newest first. */
 export function pastSessions(repo: string, home?: string): PastSession[] {
-  const sessions = sessionFiles(repoRoots(repo), home)
+  const sessions = sessionFiles(sameRepoRoots(repo, home), home)
     .map((f) => readSession(f))
     .filter((s): s is PastSession => s !== null);
   return sessions.sort((a, b) => b.at.localeCompare(a.at));
@@ -583,8 +618,10 @@ export function beginPastRead(repo: string, env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * Each finding as a standing learning: the team's in `.trail/learnings/`,
- * the person's own in ~/.trail. The body says where it came from.
+ * Each finding as a standing learning of the person's own, in ~/.trail: what
+ * someone kept telling their Claude is how they work, and their own Claude
+ * follows it. The team's learnings come from what is tied to the code: PR
+ * reviews and Claude's notes about the repo. The body says where it came from.
  */
 export function saveFindings(repo: string, findings: Finding[], author = noteAuthor(repo), date = new Date().toISOString().slice(0, 10)): Note[] {
   return findings.map((f) =>
@@ -598,7 +635,7 @@ export function saveFindings(repo: string, findings: Finding[], author = noteAut
         touches: mentionedFiles(repo, f.body),
         standing: true,
       },
-      f.for === "you" ? "personal" : "repo",
+      "personal",
     ),
   );
 }

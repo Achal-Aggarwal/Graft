@@ -407,17 +407,32 @@ async function drivePicker(initial: PickerState, title?: string | null): Promise
   }
 }
 
-/** One thing `trail init` found the person kept telling Claude, or reviewers kept flagging, as the picker shows it. */
+/** One learning `trail init` found, as the picker shows it. */
 export interface LearningChoice {
   title: string;
   forTeam: boolean;
-  /** Past sessions it was said in. */
+  /** Past sessions it was said in, for one from the person's sessions. */
   sessions?: number;
-  /** Merged PRs reviewers flagged it on, for one from PR reviews. */
-  prs?: number;
+  /** Merged PRs whose review it came from, for one from PR reviews. */
+  prs?: number[];
+  /** From Claude Code's memory of the repo on this machine. */
+  memory?: boolean;
 }
 
-/** One row per learning init found, every one ticked: the person unticks what Claude shouldn't follow. */
+/** Where a learning came from, in a few words. */
+function learningSource(it: LearningChoice): string {
+  if (it.prs?.length) {
+    const shown = it.prs.slice(0, 3).map((n) => `#${n}`).join(", ");
+    return `from review on PR ${shown}${it.prs.length > 3 ? ` +${it.prs.length - 3}` : ""}`;
+  }
+  if (it.memory) return "from your Claude's memory of this repo";
+  return `told Claude in ${it.sessions ?? 0} sessions`;
+}
+
+/**
+ * One row per learning init found. The team's are ticked: the person unticks
+ * what their teammates' Claude shouldn't follow. Their own start unticked.
+ */
 export function learningsPickerState(items: LearningChoice[]): PickerState {
   const rows: PickerRow[] = items.map((it, i) => ({
     id: String(i),
@@ -425,9 +440,10 @@ export function learningsPickerState(items: LearningChoice[]): PickerState {
     kind: 'host' as const,
     detected: true,
     hasGlobal: false,
-    summary: `${it.forTeam ? 'for your team' : 'just for you'} · ${it.prs ? `flagged in review on ${it.prs} PRs` : `told Claude in ${it.sessions ?? 0} sessions`}`,
+    summary: `${it.forTeam ? 'for your team' : 'just for you'} · ${learningSource(it)}`,
   }));
-  return { rows, cursor: 0, checked: new Set(rows.map((r) => r.id)), done: false, aborted: false };
+  const checked = new Set(rows.filter((_, i) => items[i]!.forTeam).map((r) => r.id));
+  return { rows, cursor: 0, checked, done: false, aborted: false };
 }
 
 /** The ticked learnings, as indexes into what was offered, in order. */
@@ -435,14 +451,16 @@ export function keptLearnings(state: PickerState): number[] {
   return state.rows.filter((r) => state.checked.has(r.id)).map((r) => Number(r.id));
 }
 
+/** The picker's title: what the list is, for the person deciding. */
+export function learningsTitle(items: LearningChoice[]): string {
+  return items.some((it) => it.forTeam)
+    ? `${brand()} init — your teammates' Claude doesn't know these yet. Keep the ones to share:`
+    : `${brand()} init — you told Claude these more than once. Tick the ones to keep for yourself:`;
+}
+
 /** Ask which learnings to keep: their indexes, or null when the person cancelled. */
 export async function pickLearnings(items: LearningChoice[]): Promise<number[] | null> {
-  const fromReviews = items.filter((it) => it.prs).length;
-  const title =
-    fromReviews === 0
-      ? `${brand()} init — you told Claude these more than once. Keep the ones it should follow:`
-      : `${brand()} init — ${fromReviews === items.length ? 'reviewers flagged these on more than one PR' : 'these came up more than once in your sessions and PR reviews'}. Keep the ones Claude should follow:`;
-  const state = await drivePicker(learningsPickerState(items), title);
+  const state = await drivePicker(learningsPickerState(items), learningsTitle(items));
   return state ? keptLearnings(state) : null;
 }
 

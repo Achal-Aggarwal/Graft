@@ -287,7 +287,7 @@ test("trail init makes the repo's .trail/learnings/ and says to commit it; graft
   const d = repoWithCode();
   const t = run("trail", ["init", d, "--agents", "claude", "--yes", "--no-global"], home);
   assert.equal(t.status, 0, t.err);
-  assert.match(t.err, /✓ learnings {2}\.trail\/learnings\/ · sessions that take real digging leave one there, for your whole team/);
+  assert.match(t.err, /✓ learnings {2}\.trail\/learnings\/ · a session that fixes a bug, takes a correction or opens a PR leaves one there, for your whole team/);
   assert.match(t.err, /· commit \.claude\/settings\.json and \.trail\/ once — after that, teammates' Claude reads your learnings even before they install trail/);
   assert.ok(existsSync(join(d, ".trail", "learnings")));
   assert.match(readFileSync(join(d, ".trail", "README.md"), "utf8"), /^# \.trail/);
