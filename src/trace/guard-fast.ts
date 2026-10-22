@@ -13,7 +13,7 @@
  * `process.getBuiltinModule`. TRAIL_HOME is resolved as gate-file.ts does.
  */
 import { homedir, userInfo } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import type * as Fs from 'node:fs';
 import type * as Crypto from 'node:crypto';
 import { sessionPath, trailHomeFast } from './gate-file.js';
@@ -120,18 +120,32 @@ function onlyRunsTimeout(command: string): boolean {
   return runs > 0 && (command.match(/\btimeout\b/g) ?? []).length === runs;
 }
 
-/** An executable regular file at `dir/timeout`. */
-function executableIn(dir: string): boolean {
+/** The PATH's folders, split on the platform's delimiter (';' on Windows), absolute ones only. */
+export function pathDirs(env: NodeJS.ProcessEnv): string[] {
+  return String(env.PATH ?? '').split(delimiter).filter((d) => d !== '' && isAbsolute(d));
+}
+
+/** The file names a program can have: itself, and on Windows with each PATHEXT ending too (git.exe, npm.cmd). */
+export function programFiles(name: string, env: NodeJS.ProcessEnv): string[] {
+  if (process.platform !== 'win32') return [name];
+  const exts = String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.trim().toLowerCase()).filter((e) => /^\.[a-z0-9]{1,8}$/.test(e));
+  return [name, ...exts.map((e) => name + e)];
+}
+
+/** An executable regular file at `dir/timeout` (on Windows, which has no exec bit, any timeout.exe and the like). */
+function executableIn(dir: string, env: NodeJS.ProcessEnv): boolean {
   if (!dir) return false;
-  try {
-    const f = fs();
-    const p = join(dir, 'timeout');
-    if (!f.statSync(p).isFile()) return false;
-    f.accessSync(p, f.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  const f = fs();
+  return programFiles('timeout', env).some((name) => {
+    try {
+      const p = join(dir, name);
+      if (!f.statSync(p).isFile()) return false;
+      f.accessSync(p, f.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** PATH dirs from env, then the fixed folders of 4.11. */
@@ -139,13 +153,13 @@ export function timeoutOnPath(env: NodeJS.ProcessEnv): boolean {
   const home = env.HOME || homedir();
   let user = env.USER || env.LOGNAME || '';
   if (!user) try { user = userInfo().username; } catch { /* none */ }
-  const dirs = String(env.PATH ?? '').split(':').filter((d) => d.startsWith('/'));
+  const dirs = pathDirs(env);
   for (const d of FIXED_DIRS) {
     if (d.startsWith('$HOME')) dirs.push(join(home, d.slice('$HOME'.length)));
     else if (d.includes('$USER')) { if (/^[\w.-]{1,64}$/.test(user)) dirs.push(d.replace('$USER', user)); }
     else dirs.push(d);
   }
-  return [...new Set(dirs)].some(executableIn);
+  return [...new Set(dirs)].some((d) => executableIn(d, env));
 }
 
 /** Reads <trail home>/learnings/no-timeout.md (under 1 KB) when it exists. Deny only when sure (4.11). */
