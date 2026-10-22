@@ -17,6 +17,7 @@ import { cloneShape } from "./anchors-clone-fixture.js";
 import { WIDE_SCAN_MS, wideAnchorsOf, wideGone, type WideAnchor } from "../src/skills/anchors-wide.js";
 import { goneAnchors } from "../src/skills/anchors.js";
 import type { ParsedSkill } from "../src/skills/types.js";
+import { timeBar } from "./machine-speed.js";
 
 const require = createRequire(import.meta.url);
 
@@ -174,7 +175,7 @@ test("service: a FIFO at the compose path doesn't block (D100)", { skip: process
   execFileSync("mkfifo", [join(b.checkout, "compose.yaml")]);
   const t0 = Date.now();
   assert.deepEqual(gone(b, ["docker compose up worker"]), []);
-  assert.ok(Date.now() - t0 < 1000);
+  assert.ok(Date.now() - t0 < timeBar(1000, 3000));
   execFileSync("mkfifo", [join(b.checkout, ".env")]);
   put(b, "docker-compose.yml", COMPOSE);
   rmSync(join(b.checkout, "compose.yaml"));

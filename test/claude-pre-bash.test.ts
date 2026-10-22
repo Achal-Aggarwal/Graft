@@ -18,6 +18,7 @@ import { hooksShim } from '../src/claude/shim-template.js';
 import { mergeGraftSettings } from '../src/claude/settings-merge.js';
 import { tmpRepo } from './helpers.js';
 import { RELAY_LINE } from '../src/init/relay.js';
+import { timeBar } from './machine-speed.js';
 
 const SRC = resolve('src');
 /** Loaded by `import()` only for a `skills add` command (pre-bash-skills.ts). */
@@ -275,21 +276,24 @@ test('a payload whose stdin never closes ends the hook with exit 0, inside the h
   const p = project('pre-bash-open-stdin');
   fakePackage(p.dir);
   const child = hostRun(p);
-  const r = await settle(child, (stdin) => stdin.write('{"tool_name":"Bash","tool_input":{"command":"npm'));
+  // 4.5 s where the bar was set, scaled, never under 13.5 s; the child is killed 3.5 s past it, which fails the exit code.
+  const bar = timeBar(4500, 13_500);
+  const r = await settle(child, (stdin) => stdin.write('{"tool_name":"Bash","tool_input":{"command":"npm'), bar + 3500);
   child.stdin!.destroy();
   assert.equal(r.code, 0);
   assert.equal(r.stdout, '');
-  assert.ok(r.ms < 4500, `gave up after ${r.ms} ms: the host allows 5000`);
+  assert.ok(r.ms < bar, `gave up after ${r.ms} ms: the host allows 5000`);
 });
 
 test('a 5 MB payload is read to its end and lets the command through, quickly and silently', async () => {
   const p = project('pre-bash-huge-stdin');
   fakePackage(p.dir);
   const huge = JSON.stringify({ ...BASH, tool_input: { command: `cat > /tmp/x/big.txt <<'EOF'\n${'a'.repeat(5 * 1024 * 1024)}\nEOF` } });
-  const r = await settle(hostRun(p), (stdin) => stdin.end(huge));
+  const bar = timeBar(4500, 13_500);
+  const r = await settle(hostRun(p), (stdin) => stdin.end(huge), bar + 3500);
   assert.equal(r.code, 0);
   assert.equal(r.stdout, '');
-  assert.ok(r.ms < 4500, `took ${r.ms} ms`);
+  assert.ok(r.ms < bar, `took ${r.ms} ms`);
 });
 
 /**

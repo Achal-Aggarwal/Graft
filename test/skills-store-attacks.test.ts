@@ -245,25 +245,64 @@ test("real processes writing skills.json and the ledger at once: no use counted 
   assert.deepEqual(readdirSync(join(b.trail, "state")).filter((f) => f !== "skills.json"), [], "no lock or temp file left");
 });
 
-/** One process marking one use corrected at the given instant, as a prompt hook in another session would. */
-function corrector(env: NodeJS.ProcessEnv, id: string, useId: string, atMs: number): Promise<void> {
+/**
+ * One process marking one use corrected, as a prompt hook in another session would. It loads and warms up first
+ * (a loaded runner can take seconds to start a process, so a start time fixed before the spawn can pass before
+ * one is up), says "ready", and starts at the instant the test then sends. It says whether it got the lock:
+ * "busy" when the other held it past the 200 ms the lock waits, and then it changes nothing, by design.
+ */
+function corrector(env: NodeJS.ProcessEnv, id: string, useId: string): { ready: Promise<void>; go: (atMs: number) => void; got: Promise<boolean> } {
   const script = `
     const { recordCorrected } = await import(${JSON.stringify(pathToFileURL(join(REPO, "src/skills/state.ts")).href)});
-    while (Date.now() < ${atMs}) { /* both start at the same instant */ }
-    recordCorrected(${JSON.stringify(id)}, ${JSON.stringify(useId)}, ${JSON.stringify(env)});`;
-  return new Promise((done, fail) => {
-    const p = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { cwd: REPO, stdio: ["ignore", "ignore", "inherit"] });
-    p.on("error", fail);
-    p.on("close", (code) => (code === 0 ? done() : fail(new Error(`corrector exited ${code}`))));
+    recordCorrected(${JSON.stringify(id)}, "u-none", ${JSON.stringify(env)}); // warm up: no such use, nothing marked
+    process.stdout.write("ready\\n");
+    let line = "";
+    process.stdin.on("data", (d) => {
+      line += d;
+      if (!line.includes("\\n")) return;
+      process.stdin.pause();
+      const at = Number(line.trim());
+      while (Date.now() < at) { /* both start at the same instant */ }
+      const got = recordCorrected(${JSON.stringify(id)}, ${JSON.stringify(useId)}, ${JSON.stringify(env)}) !== undefined;
+      process.stdout.write(got ? "got\\n" : "busy\\n");
+    });`;
+  const p = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { cwd: REPO, stdio: ["pipe", "pipe", "inherit"] });
+  let out = "";
+  let isReady = (): void => undefined;
+  let notReady = (_: Error): void => undefined;
+  const ready = new Promise<void>((ok, fail) => { isReady = ok; notReady = fail; });
+  p.stdout!.on("data", (d) => { out += d; if (out.includes("ready\n")) isReady(); });
+  const got = new Promise<boolean>((ok, fail) => {
+    p.on("error", (e) => { notReady(e); fail(e); });
+    p.on("close", (code) => {
+      const e = new Error(`corrector exited ${code}: ${out}`);
+      notReady(e);
+      if (code === 0 && /^(got|busy)$/m.test(out)) ok(/^got$/m.test(out));
+      else fail(e);
+    });
   });
+  got.catch(() => undefined); // awaited below; a child that dies before ready fails `ready` first
+  return { ready, go: (atMs) => p.stdin!.end(`${atMs}\n`), got };
 }
 
 test("two hooks correcting neighbouring uses at the same instant still make two in a row (the ledger is read under the lock)", async () => {
-  const b = box("procs");
-  const ref = save(b);
-  for (const [u, d] of [["u-00000a", "02"], ["u-00000b", "04"]] as const) appendLedger(ref.id, use(ref.id, { useId: u, at: `2026-11-${d}T10:00:00.000Z` }), b.env);
-  const at = Date.now() + 1500;
-  await Promise.all([corrector(b.env, ref.id, "u-00000a", at), corrector(b.env, ref.id, "u-00000b", at)]);
-  assert.equal(readLedger(ref.id, b.env).filter((l) => l.event === "corrected").length, 2);
-  assert.equal(getSkillState(ref.id, b.env)?.status, "needs-fix");
+  // A use is marked once per hook that got the lock; the one that got it second reads the first one's line under
+  // it and sees two in a row. Read outside the lock, both read before either wrote, and neither would. On a
+  // loaded runner the first can hold the lock past the second's 200 ms: that round proves nothing, so it runs again.
+  let both = 0;
+  for (let round = 0; round < 5 && both === 0; round++) {
+    const b = box("procs");
+    const ref = save(b);
+    for (const [u, d] of [["u-00000a", "02"], ["u-00000b", "04"]] as const) appendLedger(ref.id, use(ref.id, { useId: u, at: `2026-11-${d}T10:00:00.000Z` }), b.env);
+    const hooks = [corrector(b.env, ref.id, "u-00000a"), corrector(b.env, ref.id, "u-00000b")];
+    await Promise.all(hooks.map((h) => h.ready));
+    const at = Date.now() + 100;
+    for (const h of hooks) h.go(at);
+    const got = await Promise.all(hooks.map((h) => h.got));
+    assert.equal(readLedger(ref.id, b.env).filter((l) => l.event === "corrected").length, got.filter(Boolean).length, "one that found the lock busy wrote nothing");
+    if (!got.every(Boolean)) continue;
+    both++;
+    assert.equal(getSkillState(ref.id, b.env)?.status, "needs-fix");
+  }
+  assert.equal(both, 1, "in 5 rounds the two hooks never both got the lock");
 });

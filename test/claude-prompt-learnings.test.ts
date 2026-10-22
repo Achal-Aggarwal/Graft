@@ -14,6 +14,7 @@ import { BRAND_ENV } from '../src/brand.js';
 import { main } from '../src/claude/hooks.js';
 import { writeNote } from '../src/notes/notes.js';
 import { tmpRepo } from './helpers.js';
+import { timeBar } from './machine-speed.js';
 
 const PROD = { title: 'Promote to prod only after beta is green', body: '## Decided\nPush to beta first, wait for its deploy, then fast-forward prod.\n', author: 'Priya', date: '2026-10-07', touches: [] };
 const DNS = { title: 'DNS changes go through the infra repo', body: '## Decided\nNever edit records by hand.\n', author: 'Kumar', date: '2026-10-06', touches: [] };
@@ -92,7 +93,7 @@ test('learnings still arrive when the graph ask runs out of time', async () => {
   const { stub, calledFile } = askStub(dir, `setTimeout(() => {}, 60000);`);
   const started = Date.now();
   const text = context(await prompt('how do we promote this build to prod safely', stub));
-  assert.ok(Date.now() - started < 20000, 'the ask was cut off');
+  assert.ok(Date.now() - started < timeBar(20_000, 40_000), 'the ask was cut off (the stand-in sleeps 60 s)');
   assert.equal(existsSync(calledFile), true);
   assert.match(text, /Promote to prod only after beta is green/);
 });

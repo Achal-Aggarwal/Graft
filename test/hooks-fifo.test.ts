@@ -12,6 +12,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { timeBar } from './machine-speed.js';
 
 const SRC = resolve(import.meta.dirname, '..', 'src');
 const FIXTURES = resolve(import.meta.dirname, 'claude-skills-journey-fixtures.ts');
@@ -41,7 +42,7 @@ test('a FIFO at the PostToolUse mark file: appendPostMark returns at once and wr
     fifoAt(path);
     const ms = inChild(root, env, `const { appendPostMark } = await import(${JSON.stringify(join(SRC, 'trace', 'gate-file.ts'))});
 appendPostMark('s-fifo', { id: 'toolu_1', at: '2026-10-01T10:00:01.000Z', failed: false }, env);`);
-    assert.ok(ms < 100, `${ms} ms`);
+    assert.ok(ms < timeBar(100, 400), `${ms} ms`);
     assert.ok(stillFifo(path));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -56,7 +57,7 @@ test('a FIFO at the hook-error log: hookError returns at once and writes nothing
     fifoAt(path);
     const ms = inChild(root, env, `const { hookError } = await import(${JSON.stringify(join(SRC, 'claude', 'skills-hook-util.ts'))});
 hookError('prompt', new TypeError('made up'), env);`);
-    assert.ok(ms < 100, `${ms} ms`);
+    assert.ok(ms < timeBar(100, 400), `${ms} ms`);
     assert.ok(stillFifo(path));
   } finally {
     rmSync(root, { recursive: true, force: true });

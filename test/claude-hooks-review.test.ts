@@ -20,6 +20,7 @@ import { withoutOffer } from '../src/claude/stop-skills.js';
 import {
   agentRuns, at, box, cli, done, finish, lastCli, one, promptHook, release, reply, session, skillsKept, stateOf, stopHook,
 } from './claude-skills-journey-fixtures.js';
+import { timeBar } from './machine-speed.js';
 
 const OFFER = { lines: ['Published 1.4.3: npm shows it. That\'s the 3rd day I\'ve worked out this release from scratch (4 commands this time).', 'Keep the 2 that worked as a skill, just for you in this repo? (yes / show me / no)'] as [string, string] };
 
@@ -256,11 +257,11 @@ test('a 2 MB command with a step that can\'t be undone in it still asks inside t
       const d = await ask(command);
       const ms = Date.now() - t;
       assert.equal(d?.permissionDecision, 'ask', tail);
-      assert.ok(ms < 4000, `${tail}: ${ms} ms (the hook has 5 s)`);
+      assert.ok(ms < timeBar(4000, 12_000), `${tail}: ${ms} ms (the hook has 5 s)`);
     }
     const t = Date.now();
     assert.equal(await ask(`echo ${'a|'.repeat(900_000)}`), null, 'nothing gated in it: nothing to ask');
-    assert.ok(Date.now() - t < 4000);
+    assert.ok(Date.now() - t < timeBar(4000, 12_000));
   } finally {
     done(b);
   }

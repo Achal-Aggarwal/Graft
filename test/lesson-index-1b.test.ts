@@ -11,7 +11,7 @@ import { wallLessons, writeLesson } from '../src/skills/lessons.js';
 import { everyRepoDir } from '../src/notes/every-repo.js';
 import { lessonIndexPath, refreshLessonIndex } from '../src/notes/lesson-index.js';
 import { tmpRepo } from './helpers.js';
-import { slowness } from './machine-speed.js';
+import { timeBar } from './machine-speed.js';
 
 const SHOP = 'github.com/acme/shop';
 const made: string[] = [];
@@ -58,9 +58,10 @@ test('D117 (4): with the index warm, a wall hit reads 1,000 every-repo learnings
   const warm: number[] = [];
   for (let i = 0; i < 7; i++) warm.push(cpuMs(() => assert.equal(wallLessons('docker-rootless', SHOP, env).length, 5)));
   const median = [...warm].sort((a, b) => a - b)[3]!;
-  // 30 ms where the bar was set, scaled to this machine, and never under 50: Windows counts CPU time in ~15.6 ms
-  // steps, so a 5 ms read can show as 31. A lost index (warm as slow as cold) still fails the line after.
-  const bar = Math.max(30 * slowness(), 50);
+  // 30 ms where the bar was set, scaled to this machine, and never under 150: Windows counts CPU time in ~15.6 ms
+  // steps, and a loaded runner read 78 ms warm against 578 cold. A lost index (warm as slow as cold) still fails
+  // the line after, on any machine.
+  const bar = timeBar(30, 150);
   assert.ok(median < bar, `warm median ${median.toFixed(1)} ms of CPU, over ${bar.toFixed(1)} ms (cold ${cold.toFixed(1)} ms)`);
   assert.ok(median * 3 < cold, `the index pays: warm ${median.toFixed(1)} ms, cold ${cold.toFixed(1)} ms`);
 });

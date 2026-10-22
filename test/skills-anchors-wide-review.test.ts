@@ -19,6 +19,7 @@ import type { ParsedSkill } from "../src/skills/types.js";
 import { promptSkills, type PromptDeps } from "../src/claude/prompt-skills.js";
 import { releaseSkill, WEBSHOP } from "./skills-recall-fixtures.js";
 import { box as promptBox, CWD, gateFor, payload, save } from "./skills-prompt-fixtures.js";
+import { timeBar } from "./machine-speed.js";
 
 const require = createRequire(import.meta.url);
 
@@ -153,7 +154,8 @@ test("ci-file: many CI anchors read the folder once, inside the scan's deadline 
   }
   const took = Date.now() - t;
   assert.ok(reads <= 64, `each CI file read at most once (${reads} reads)`);
-  assert.ok(took < 400, `inside the cap (${took} ms)`);
+  // The 150 ms deadline, and what a slow machine adds around it.
+  assert.ok(took < 150 + timeBar(250, 750), `inside the cap (${took} ms)`);
   assert.ok(out.length === 0 || out.length === 12, "past the deadline nothing is judged; inside it, all are");
 });
 

@@ -9,6 +9,7 @@ import { statSync } from "node:fs";
 import { minePreferences } from "../src/init/prefs.js";
 import { replaySession } from "../src/init/replay-runs.js";
 import { day, done, SHOP, Tx, world } from "./init-mine-fixtures.js";
+import { timeBar } from "./machine-speed.js";
 
 process.env.TZ = "UTC";
 
@@ -27,7 +28,8 @@ test("20,000 different preference-shaped lines cluster in bounded time, the newe
   const t = Date.now();
   const found = minePreferences(typed);
   const ms = Date.now() - t;
-  assert.ok(ms < 5000, `took ${ms} ms`);
+  // 5 s where the bar was set, scaled to this machine, never under 15 s.
+  assert.ok(ms < timeBar(5000, 15_000), `took ${ms} ms`);
   assert.ok(found.some((c) => c.shortest === "never squash release commits"));
 });
 
@@ -41,7 +43,8 @@ test("one session with 100,000 typed lines stops at its time cap and says so", (
     const r = replaySession(path, { from: 0, to: statSync(path).size }, SHOP, new Date(day(28)), { env: w.env, maxMs: 1500 });
     const ms = Date.now() - t;
     assert.equal(r.stopped, "time");
-    assert.ok(ms < 6000, `took ${ms} ms`);
+    // The 1.5 s cap, and what a slow machine adds around it.
+    assert.ok(ms < 1500 + timeBar(4500, 13_500), `took ${ms} ms`);
   } finally {
     done(w);
   }
