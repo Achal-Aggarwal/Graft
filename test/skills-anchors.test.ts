@@ -201,7 +201,8 @@ test("goneAnchors: a program not on PATH is gone; one in a fixed or version-mana
   assert.deepEqual(goneAnchors(nvm, b.checkout, b.env), [], "$HOME/.nvm/versions/node/*/bin");
   const notExec = join(b.bin, "plainfile");
   writeFileSync(notExec, "");
-  assert.deepEqual(kinds(goneAnchors(skill(["plainfile run"]), b.checkout, b.env)), ["program:plainfile#1"], "a file that can't run is not a program");
+  // Windows has no exec bit: any file of the name is taken as there (guard-fast.ts programFiles), so no false warning.
+  assert.deepEqual(kinds(goneAnchors(skill(["plainfile run"]), b.checkout, b.env)), process.platform === "win32" ? [] : ["program:plainfile#1"], "a file that can't run is not a program");
   exe(b.bin, "acme2");
   assert.deepEqual(goneAnchors(skill(["acme2 x"]), b.checkout, b.env), [], "on the hook's PATH");
   assert.deepEqual(goneAnchors(s, b.checkout, { ...b.env, PATH: "" }), [], "no PATH: no program check");
