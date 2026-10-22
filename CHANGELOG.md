@@ -1,22 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.24.1
 
 ### Added
 
-- **`trail init --connect <code>`**: the onboarding on app.trailhq.com. The
-  one-time code connects this machine to the workspace (the token goes where
-  `trail login` keeps it), the page ticks off connected, mapped and learned as
-  init runs, and one summary of the repo goes up: what one lookup on the code
-  map saved, the learnings' titles, and teammates' recently pushed branches
-  that change the files you work on. Titles, counts and names only; never
-  code, diffs or session text. `--server` (or `TRAIL_URL`) points it at
-  another Trail.
+- **`trail init --pair <code>`**: set up from the Trail web app at
+  team.trailhq.com. The setup prompt there carries a pair code; with it, init
+  streams its steps (map, PR reviews, past sessions, learnings) to the live
+  onboarding page, which shows the tokens one lookup on the map saved and
+  teammates' open branches that touch your files, then hands the repo's
+  learnings and skills over for you to review before anything is uploaded.
+  A learning you drop there stays dropped.
+- **`trail init --connect <code>`**: connects this machine to your Trail
+  workspace with the one-time code from team.trailhq.com (the token goes where
+  `trail login` keeps it) and sends one summary of the repo: what a lookup on
+  the code map saved, the learnings' titles, and teammates' recently pushed
+  branches that change the files you work on. Titles, counts and names only;
+  never code, diffs or session text.
+- **`--server <url>`** (or `TRAIL_URL`) points `--pair` and `--connect` at a
+  self-hosted Trail. Offline, init says so once and prints the exact command
+  to connect later.
 - **Workspace brains in your agents**: once connected, `trail mcp` also serves
   the workspace's `list_brains`, `get_context`, `search_rules` and `get_rules`,
   passed to the workspace with your token; the repo tools keep working
   offline. Claude Code gets one user-level `trail` entry that serves just
   those (`trail mcp --brains`); `trail logout` takes it out.
+- `trail init` writes a skill when your past sessions repeat a procedure.
+
+### Changed
+
+- Trail cloud now defaults to https://team.trailhq.com.
+
+### Fixed
+
+- The agent picker no longer leaves a stray title behind in an 80-column
+  terminal.
 
 ## 0.24.0
 
