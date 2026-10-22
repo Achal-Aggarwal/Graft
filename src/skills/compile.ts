@@ -38,6 +38,7 @@ import { type LoopWait, WIN_TEMP, splitSheet, stripScratchLog } from './compile-
 import { answersPrompt, loginFeed } from './answers-prompt.js';
 import { checkShowsFor, shownVersion, versionShaped, versionTie } from './compile-version.js';
 import { findWaits } from './compile-waits.js';
+import { followAtSave, type StepLearning } from './follow-learnings.js';
 
 export { BUILT_IN_NAMES, NAME_RE, askPhrases, draftText, proposeName, refusalWords, type CompileRefusal } from './compile-words.js';
 
@@ -65,6 +66,12 @@ export interface CompileOpts {
    * it (`askPhrases`: phrases of 2+ words) and from nothing else. Read, never stored beyond those asks.
    */
   askedWith?: string | null;
+  /**
+   * Part 7: the person's live preferences, decisions and guardrails about commands (`stepLearnings`). A step one of
+   * them goes against is written its way when that is safe, else left out, and `followed` says so. Every half of a
+   * save passes the same ones, read from disk, so they compile the same skill. Absent: none.
+   */
+  learnings?: readonly StepLearning[];
 }
 
 class Refused extends Error {
@@ -329,6 +336,19 @@ function build(sheet: RunSheet, opts: CompileOpts): CompiledSkill {
     if (k.items.every((it) => !it.wait && !it.bg && plain(it.text))) refuse('trivial', k.items.map((it) => it.text).join(' ; '));
   }
 
+  // Part 7: the steps follow the person's learnings about commands; the check can't be left out.
+  const follow = followAtSave(k.items.map((it, n) => ({ cmd: found.cmds[n]!, gated: it.gated !== null, isCheck: k.checkIsStep && it.isCheck })), [...(opts.learnings ?? [])]);
+  if (follow.refuse) refuse('never-save', follow.refuse);
+  if (follow.line) {
+    const was = k.items;
+    k.items = follow.keep.map(({ i, cmd }) => (cmd === found.cmds[i] ? was[i]! : { ...was[i]!, core: /^\(cd \S+ && (.*)\)$/.exec(cmd)?.[1] ?? cmd }));
+    const cmds = follow.keep.map(({ cmd }) => cmd);
+    const checkAt = follow.keep.findIndex(({ i }) => k.checkIsStep && was[i]!.isCheck);
+    if (checkAt >= 0) found.check = cmds[checkAt]!;
+    found.cmds = cmds;
+    if (!k.items.length) refuse('no-steps');
+  }
+
   // Step 13: name and words.
   let steps: SkillStep[] = k.items.map((it, n) => ({ n: n + 1, cmd: found.cmds[n]!, gated: it.gated, bg: it.bg, wait: it.wait, from: it.from }));
   const sourceCalls = k.items.map((it) => it.call);
@@ -411,6 +431,7 @@ function build(sheet: RunSheet, opts: CompileOpts): CompiledSkill {
     helpers: k.helpers, leftOut, ...(k.elsewhere.length ? { elsewhere: elsewhereLines(k.elsewhere, sheet.repoKey, (t) => relativizePaths(cleanText(t, opts.platform), opts.repoRoot, opts.home)) } : {}),
     ...(sheet.joined?.length ? { carried: carriedSteps(sheet, steps) } : {}),
     source: { runId: sheet.id, commands: sheet.counts.commands, failed: sheet.counts.failed, at: sheet.endedAt },
+    ...(follow.line ? { followed: follow.line } : {}),
   };
   const text = renderSkillMd(c);
   const problems = skillProblems(text, name);

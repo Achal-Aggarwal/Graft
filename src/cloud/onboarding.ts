@@ -628,7 +628,7 @@ export function teammatesChecked(
   }
 }
 
-/** The Trail a code is claimed against: `--server`, TRAIL_URL, or Trail cloud. */
+/** The Trail a code is claimed against: `--server` for this run (useServer), or Trail cloud. */
 export function connectBase(env: NodeJS.ProcessEnv = process.env): string {
   return trailUrl(env);
 }

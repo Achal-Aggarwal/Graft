@@ -19,9 +19,11 @@ function pointerFile(pointer: string): string {
 /**
  * Queue one search event for `r`, when it showed a learning or saved tokens.
  * Uses are counted from the learnings shown only; `saved_tokens` rides along.
- * Query and files are sent only with a shown learning. `savedTokens` is the
- * saving from a pack the caller already rendered (see formatAskWithSaved), so
- * the lookup isn't rendered a second time. Never throws.
+ * A count of the files, never the query or the paths: for the prompt hook the
+ * query is the person's prompt. Only learnings the workspace gets are named:
+ * a personal one's file name carries its title. `savedTokens` is the saving
+ * from a pack the caller already rendered (see formatAskWithSaved), so the
+ * lookup isn't rendered a second time. Never throws.
  */
 export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = readCloud(), savedTokens?: number): void {
   try {
@@ -29,12 +31,11 @@ export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = r
     // or in a repo outside the workspace, and must cost nothing here.
     const key = repoPlace(repo).key;
     if (!records(cloud, key)) return;
-    const shown = r.notes ?? [];
+    const shown = (r.notes ?? []).filter((h) => h.note.scope !== "personal");
     const saved = savedTokens ?? askSavedTokens(r);
     if (!shown.length && saved <= 0) return;
     const me = noteAuthor(repo);
-    // A lookup that showed no learning leaves with its savings only: the query
-    // and the files it touched are session text, and stay on this machine.
+    // A lookup that showed no learning leaves with its savings only.
     const used = shown.length > 0;
     recordActivity(
       {
@@ -42,8 +43,7 @@ export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = r
         kind: "search",
         asker: me,
         session: sessionKey(repo) ?? `${me}-${new Date().toISOString().slice(0, 10)}`,
-        query: used ? r.query : "",
-        files: used ? [...new Set(r.hits.map((h) => pointerFile(h.pointer)))] : [],
+        file_count: used ? new Set(r.hits.map((h) => pointerFile(h.pointer))).size : 0,
         shown_paths: shown.map((h) => noteName(h.note)),
         shown_authors: shown.map((h) => h.note.author),
         ...(saved > 0 ? { saved_tokens: saved } : {}),

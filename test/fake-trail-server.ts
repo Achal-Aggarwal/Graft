@@ -2,7 +2,7 @@
  * A stand-in for team.trailhq.com's CLI routes, over real HTTP, for the
  * `init --connect` and MCP proxy tests (and for trying the flow by hand:
  * `node --import tsx test/fake-trail-server.ts 8787`, then
- * `TRAIL_URL=http://127.0.0.1:8787 trail init --connect TRL-GOOD-C0DE`).
+ * `TRAIL_TEST_SERVER=http://127.0.0.1:8787 trail init --connect TRL-GOOD-C0DE`).
  *
  * Shapes follow the onboarding contract (A1: connect, stages, summary; A2:
  * the workspace connector's brain tools over MCP streamable HTTP, stateless

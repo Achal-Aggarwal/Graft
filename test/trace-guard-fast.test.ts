@@ -16,6 +16,7 @@ import { FIXED_DIRS, SURE_FAIL_REASON, markDenied, sureFail, timeoutOnPath } fro
 import { writeEveryRepo } from "../src/notes/every-repo.js";
 import { guardrailLearning } from "../src/notes/guardrails.js";
 import { sessionPath } from "../src/trace/gate-file.js";
+import { timeBar } from "./machine-speed.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 /** A machine with a real `timeout` in a system folder of 4.11 can't show a deny: those tests say so and skip. */
@@ -194,5 +195,7 @@ test("a guard call takes under 2 ms (best of 200, file kept, no timeout anywhere
     times.push(Number(process.hrtime.bigint() - t0) / 1e6);
   }
   times.sort((a, z) => a - z);
-  assert.ok(times[Math.floor(times.length / 2)]! < 2, `median ${times[100]} ms`);
+  // 2 ms where the bar was set, scaled, never under 8: a guard that read a big file or spawned a child takes tens.
+  const bar = timeBar(2, 8);
+  assert.ok(times[Math.floor(times.length / 2)]! < bar, `median ${times[100]} ms, over ${bar.toFixed(1)} ms`);
 });

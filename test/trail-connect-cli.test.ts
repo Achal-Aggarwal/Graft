@@ -90,7 +90,7 @@ function envFor(url: string): NodeJS.ProcessEnv {
     HOME: home,
     USERPROFILE: home,
     TRAIL_HOME: join(home, ".trail"),
-    TRAIL_URL: url,
+    TRAIL_TEST_SERVER: url,
     // No past-session or PR-review read (those ask Claude and GitHub), and no git fetch.
     TRAIL_NO_FETCH: "1",
     DO_NOT_TRACK: "1",
@@ -196,7 +196,7 @@ test("offline, init still sets the repo up and says how to connect later", async
   assert.equal(existsSync(join(env.TRAIL_HOME!, "cloud.json")), false);
 
   // The same with --server: the hint carries the --server that was used.
-  const flagged = await run(["init", repo, "--connect", GOOD_CODE, "--server", "http://127.0.0.1:9/", "--agents", "claude", "--no-global", "--no-build"], { ...env, TRAIL_URL: "" });
+  const flagged = await run(["init", repo, "--connect", GOOD_CODE, "--server", "http://127.0.0.1:9/", "--agents", "claude", "--no-global", "--no-build"], { ...env, TRAIL_TEST_SERVER: "" });
   assert.equal(flagged.status, 0, flagged.stderr);
   assert.equal((flagged.stderr.match(/couldn't reach Trail/g) ?? []).length, 1);
   assert.match(flagged.stderr, /to connect it later: trail init --connect TRL-GOOD-C0DE --server http:\/\/127\.0\.0\.1:9$/m);

@@ -21,7 +21,7 @@ import { tmpRepo } from "./helpers.js";
 
 process.env.DO_NOT_TRACK = "1";
 process.env[BRAND_ENV] = "trail";
-process.env.TRAIL_URL = "http://trail.test";
+process.env.TRAIL_TEST_SERVER = "http://trail.test";
 process.env.TRAIL_NO_FETCH = "1";
 
 function freshHome(): void {
@@ -32,13 +32,16 @@ function git(d: string, args: string[]) {
   spawnSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: d });
 }
 
-/** A GitHub-backed repo with one learning in its .trail/. */
+/** A GitHub-backed repo with one learning in its .trail/, committed: a sync uploads only what HEAD has. */
 function repo(): string {
   const dir = tmpRepo("pair");
   git(dir, ["init", "-q", "-b", "main"]);
   git(dir, ["config", "user.name", "Priya Raman"]);
+  git(dir, ["config", "user.email", "priya@acme.test"]);
   git(dir, ["remote", "add", "origin", "https://github.com/acme/billing.git"]);
   writeNote(dir, { title: "Keep payment retries at 4", body: "## Decided\nFour retries.", author: "Sam", date: "2026-10-07", touches: [] });
+  git(dir, ["add", "-A", "-f"]);
+  git(dir, ["commit", "-q", "-m", "learning"]);
   return dir;
 }
 

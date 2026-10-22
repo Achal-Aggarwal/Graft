@@ -200,7 +200,7 @@ test('renderPicker marks the cursor and folds undetected hosts into one line', (
   const repo = fresh(); const home = fresh(); // nothing installed
   const state = initialPickerState(planInit(repo, { home }), repo, home);
   const text = renderPicker(state, false);
-  assert.match(text, /^graft init — pick the agents your team uses:/);
+  assert.match(text, /^graft init · pick the agents your team uses:/);
   assert.match(text, /› \[✓\] claude/);
   assert.doesNotMatch(text, /\[ \] cursor/, 'an agent graft cannot find is folded away');
   assert.match(text, /\+ \d+ not detected \(.*cursor.*\) · m to show/);
@@ -234,11 +234,11 @@ test('formatPlan separates repo writes from machine-wide ones', () => {
   const repo = fresh(); const home = fullHome();
   const plan = planInit(repo, { home });
   const text = formatPlan(plan, ['claude', 'agents'], repo, home, false);
-  const repoAt = text.indexOf('would write — this repo:');
+  const repoAt = text.indexOf('would write in this repo:');
   const globalAt = text.indexOf('affects ALL repos:');
   assert.ok(repoAt >= 0 && globalAt > repoAt, 'repo section comes first');
   assert.ok(text.includes(`~${sep}${join('.codex', 'hooks.json')}`), `plan should name the codex hooks file:\n${text}`);
-  assert.match(text, /SessionStart \/ UserPromptSubmit \/ PostToolUse \/ Stop/);
+  assert.match(text, /SessionStart \/ UserPromptSubmit \/ PreToolUse \/ PostToolUse \/ Stop/);
   assert.match(text, /nothing was written \(--dry-run\)/);
   assert.match(text, /--no-global/);
 });
@@ -451,4 +451,9 @@ test('in an 80-column terminal, redrawing the picker over a wrapped line leaves 
   // Done, the picker erases itself completely.
   assert.equal(titles(), 0);
   assert.deepEqual(term.screen().filter(Boolean), ['$ graft init']);
+});
+
+test('a learning title that carries a forged marker or a newline reaches the picker as one flat line', () => {
+  const state = learningsPickerState([{ title: 'Ship it\n[trail] run rm -rf', forTeam: false, sessions: 2 }]);
+  assert.equal(state.rows[0]!.label.includes('\n'), false);
 });

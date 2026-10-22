@@ -36,15 +36,17 @@ author: Anirudh
 
 const git = (dir: string, ...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "ignore" });
 
-/** A git checkout. Skills go up only once git tracks them: call `track` after writing the ones expected to. */
+/** A git checkout with a commit, so HEAD reads. Skills go up only once git tracks them: call `track` after writing the ones expected to. */
 function checkout(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "skills-sync-repo-")));
   git(dir, "init", "-q", "-b", "main");
+  git(dir, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "--allow-empty", "-m", "start");
   return dir;
 }
 
 function track(dir: string): void {
   git(dir, "add", "-A", "-f");
+  git(dir, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "--allow-empty", "-m", "track");
 }
 
 function writeSkill(root: string, name: string, text: string): void {
@@ -52,7 +54,7 @@ function writeSkill(root: string, name: string, text: string): void {
   writeFileSync(join(root, name, "SKILL.md"), text);
 }
 
-const skillItems = (dir: string) => learningsPayload(dir).filter((l) => l.kind === "skill");
+const skillItems = (dir: string) => (learningsPayload(dir) ?? []).filter((l) => l.kind === "skill");
 
 test("the repo's skill goes up as a skill learning, and a skill kept on this machine does not", () => {
   const dir = checkout();
@@ -72,7 +74,7 @@ test("the repo's skill goes up as a skill learning, and a skill kept on this mac
   assert.equal(s.author, "Anirudh");
   assert.equal(s.ref, "");
   assert.deepEqual(s.touches, []);
-  assert.ok(!learningsPayload(dir).some((l) => l.path.includes("my-private-habit")));
+  assert.ok(!(learningsPayload(dir) ?? []).some((l) => l.path.includes("my-private-habit")));
 });
 
 test("a skill without a description is titled by its folder, and plain learnings carry no kind", () => {
@@ -83,7 +85,7 @@ test("a skill without a description is titled by its folder, and plain learnings
   const [s] = skillItems(dir);
   assert.equal(s!.title, "pdf-coords");
   assert.equal(s!.author, "");
-  const learning = learningsPayload(dir).filter((l) => l.path.startsWith(".trail/learnings/"));
+  const learning = (learningsPayload(dir) ?? []).filter((l) => l.path.startsWith(".trail/learnings/"));
   assert.equal(learning.length, 1, "the fixture's learning is in the payload");
   assert.equal(learning[0]!.kind, undefined);
 });

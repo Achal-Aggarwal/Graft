@@ -1,7 +1,9 @@
 /**
- * `~/.trail/settings.json`: learned skills on or off (off by default), offers
+ * `~/.trail/settings.json`: learned skills on or off (on by default), offers
  * on or off (everywhere or per repo), pauses after two nos, skills a person
- * turned off, and the governor's cache.
+ * turned off, and the governor's cache. On by default changes no consent:
+ * nothing is kept or changed without the person's typed yes at each offer and
+ * update, and a step that can't be undone still asks first.
  *
  * Who may change what is fixed: only the person's own commands (the setters,
  * imported only by `skills/cli-skills.ts`) turn skills and offers on or off;
@@ -19,7 +21,7 @@ import { readJsonSafe, trailPath, withLock, writePrivate } from '../util/private
 export { isTestHome, labInteractive } from './host-facts.js';
 
 export const DEFAULT_SETTINGS: TrailSkillSettings = Object.freeze({
-  v: 1, skills: 'off', onSince: null, offers: 'on', offersOffAt: null, offRepos: Object.freeze([]) as unknown as string[],
+  v: 1, skills: 'on', onSince: null, offers: 'on', offersOffAt: null, offRepos: Object.freeze([]) as unknown as string[],
   pausedUntil: Object.freeze({}) as Record<string, string>, skillsOff: Object.freeze([]) as unknown as string[],
   lastNine: Object.freeze([]) as unknown as Array<'yes' | 'no' | 'none'>, governorSaidAt: null,
 } as TrailSkillSettings);
@@ -45,7 +47,8 @@ function fromRaw(raw: unknown): TrailSkillSettings {
   }
   return {
     v: 1,
-    skills: r.skills === 'on' ? 'on' : 'off',
+    // On unless the person turned skills off (`trail skills off`).
+    skills: r.skills === 'off' ? 'off' : 'on',
     onSince: strOrNull(r.onSince),
     offers: r.offers === 'off' ? 'off' : 'on',
     offersOffAt: strOrNull(r.offersOffAt),
@@ -123,6 +126,25 @@ export function setSkillOff(name: string, off: boolean, env?: NodeJS.ProcessEnv)
     s.skillsOff = s.skillsOff.filter((n) => n !== name);
     if (off) s.skillsOff.push(name);
   }, PERSON_WAIT_MS);
+}
+
+/**
+ * Skills are on by default, so `onSince` (the first week's offer cap, the
+ * weekly value line) starts at the first session start that finds them on
+ * with no date yet. Writes only `onSince`, and only then; never turns
+ * anything on or off. Only src/claude/skills-wiring.ts imports it (the same
+ * test).
+ */
+export function noteSkillsStarted(env?: NodeJS.ProcessEnv, now: Date = new Date()): void {
+  const s = readSettings(env);
+  if (s.skills !== 'on' || s.onSince !== null) return;
+  try {
+    update(env, (cur) => {
+      if (cur.skills === 'on' && cur.onSince === null) cur.onSince = now.toISOString();
+    }, HOOK_WAIT_MS);
+  } catch {
+    /* busy: the next session start tries again */
+  }
 }
 
 // Bookkeeping writers. Only src/skills/offers.ts imports these (the same test).

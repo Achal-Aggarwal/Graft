@@ -22,9 +22,9 @@ import { repoName, repoPlace } from "../notes/home.js";
 import type { SavedSkill } from "../skills/found-skill.js";
 import { skillDirs, skillName } from "../skills/skills.js";
 import { matter } from "../util/front-matter.js";
-import { newState, pickerRepos } from "./nudge.js";
+import { newState } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
-import { dropActivity, learningsPayload, syncRepo } from "./workspace-sync.js";
+import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
 import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, trailUrl, writeCloud, type Cloud } from "./workspace.js";
 
 /** A pair code as the onboarding page prints it: letters and digits. */
@@ -129,11 +129,10 @@ export class PairRun {
     const state = newState();
     const place = repoPlace(repo);
     const current = place.git ? { key: place.key, name: repoName(place.key, place.checkout) } : null;
-    // This repo first, with the learnings it already has: init hasn't told
-    // Trail about it yet, so the list of known repos may not have it.
-    const here = place.git ? learningsPayload(place.checkout).filter((l) => l.ref === "" && l.kind !== "skill").length : 0;
-    const known = pickerRepos().filter((r) => r.key !== current?.key);
-    if (current) known.unshift({ ...current, learnings: here });
+    // This repo only, with the learnings it already has: nobody has signed in
+    // yet, so nothing tells Trail what else is on this machine.
+    const here = place.git ? reviewPayload(place.checkout).filter((l) => l.ref === "" && l.kind !== "skill").length : 0;
+    const known = current ? [{ ...current, learnings: here }] : [];
     const reg = await registerHandoff(
       base,
       { state, repo: current, repos: known, author: noteAuthor(repo), pair: code.trim().toUpperCase() },
@@ -188,7 +187,7 @@ export class PairRun {
     // then the skills this run wrote and the ones the repo already has.
     const found: Record<string, unknown>[] = [];
     if (place.git) {
-      const payload = learningsPayload(place.checkout);
+      const payload = reviewPayload(place.checkout);
       const item = (l: (typeof payload)[number]) => ({
         kind: l.kind === "skill" ? "skill" : "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches,
       });
@@ -219,13 +218,12 @@ export class PairRun {
     return this.chain.then(() => undefined);
   }
 
-  /** Start the detached wait for the connection and the review. */
+  /** Start the detached wait for the connection and the review, at the Trail this run reported to. */
   handOff(repo: string): void {
-    const child = spawn(process.execPath, [graftCliPath(), "_trail-pair", this.state, repo], {
+    const child = spawn(process.execPath, [graftCliPath(), "_trail-pair", this.state, repo, this.base], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, TRAIL_URL: this.base },
     });
     child.unref();
   }

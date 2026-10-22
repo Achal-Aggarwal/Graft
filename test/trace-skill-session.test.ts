@@ -18,6 +18,7 @@ import { readRunSheet, runSheetPath, writeRunSheet } from "../src/trace/runs.js"
 import { withLock } from "../src/util/private-fs.js";
 import { compactBoundary, jsonl, toolUse } from "./trace-fixtures.js";
 import { ask, at, bash, emptyState, injection, reply, runState } from "./trace-run-fixtures.js";
+import { timeBar } from "./machine-speed.js";
 
 const SID = "5f0c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b";
 const PASS = "Test Files  3 passed (3)\n     Tests  42 passed (42)";
@@ -27,7 +28,7 @@ function box(opts: { skills?: boolean; lab?: boolean } = {}) {
   // TRAIL_HOME apart from $HOME/.trail: a test home, where the test clock is honoured.
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: homeDir, TRAIL_HOME: join(homeDir, "trail-home"), CLAUDE_CODE_ENTRYPOINT: "cli" };
   mkdirSync(env.TRAIL_HOME!, { recursive: true });
-  if (opts.skills !== false) writeFileSync(join(env.TRAIL_HOME!, "settings.json"), JSON.stringify({ v: 1, skills: "on" }));
+  writeFileSync(join(env.TRAIL_HOME!, "settings.json"), JSON.stringify({ v: 1, skills: opts.skills === false ? "off" : "on" }));
   if (opts.lab) writeFileSync(join(homeDir, ".trail-lab"), "");
   const transcript = join(homeDir, ".claude", "projects", "-home-dev-shop", `${SID}.jsonl`);
   mkdirSync(join(transcript, ".."), { recursive: true });
@@ -315,7 +316,7 @@ test("a first catch-up on a long transcript reads only its last 8 MB", () => {
     withSkillSession(ctx, { catchUp: true }, (st) => {
       assert.deepEqual(st.runs.map((r) => r.job), ["tests"], "the early publish was never read");
     });
-    assert.ok(performance.now() - t0 < 2000);
+    assert.ok(performance.now() - t0 < timeBar(2000, 6000));
   } finally {
     rmSync(b.homeDir, { recursive: true, force: true });
   }

@@ -154,7 +154,7 @@ test("post marks: appended one per line (0600), taken in order, and gone once ta
 test("skillsOnFast reads settings.json with fs only, and agrees with readSettings", () => {
   const env = home();
   const settings = join(env.TRAIL_HOME!, "settings.json");
-  assert.equal(skillsOnFast(env), false);
+  assert.equal(skillsOnFast(env), true, "on by default, with no settings file");
   mkdirSync(env.TRAIL_HOME!, { recursive: true });
   for (const body of ['{"v":1,"skills":"on"}', '{"v":1,"skills":"off"}', "{bad", '{"skills":true}', "[]"]) {
     writeFileSync(settings, body);

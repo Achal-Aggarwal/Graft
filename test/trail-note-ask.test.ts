@@ -135,7 +135,8 @@ test('a saved learning starts the signs over; one the gate turned away does not;
 async function stop(input: object): Promise<string> {
   let out = '';
   const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => ((out += String(chunk)), true)) as typeof process.stdout.write;
+  // Only the hook's strings: the test runner's own reports pass through, as the other hook tests do.
+  process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => (typeof chunk === 'string' ? ((out += chunk), true) : (write as (...a: unknown[]) => boolean)(chunk, ...rest))) as typeof process.stdout.write;
   process.env.GRAFT_TEST_STDIN = JSON.stringify(input);
   try {
     await main('stop');

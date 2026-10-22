@@ -66,8 +66,9 @@ test("a lookup that saved tokens is queued with them, though no learning was sho
   assert.equal(events[0].kind, "search");
   assert.equal(events[0].saved_tokens, 15392);
   assert.deepEqual(events[0].shown_paths, []);
-  assert.equal(events[0].query, "", "session text stays on this machine");
-  assert.deepEqual(events[0].files, []);
+  assert.equal("query" in events[0], false, "session text stays on this machine");
+  assert.equal("files" in events[0], false);
+  assert.equal(events[0].file_count, 0);
 });
 
 test("no estimate and no learning shown: nothing is queued", () => {
@@ -90,8 +91,9 @@ test("a learning shown without an estimate is still a use, with no saved_tokens"
   const events = queued();
   assert.equal(events.length, 1);
   assert.deepEqual(events[0].shown_paths, ["2026-10-09-jitter-kumar.md"]);
-  assert.equal(events[0].query, "retry count", "unchanged: a shown learning keeps its query and files");
-  assert.deepEqual(events[0].files, ["client.go"]);
+  assert.equal("query" in events[0], false, "never the query: for the prompt hook it is the person's prompt");
+  assert.equal("files" in events[0], false, "a count of the files, never their paths");
+  assert.equal(events[0].file_count, 1);
   assert.equal("saved_tokens" in events[0], false);
 });
 
