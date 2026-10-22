@@ -132,7 +132,8 @@ test("4.5: a publish through script is gated; keystrokes fed to its prompt refus
 });
 
 test("4.5: a helper script run from a scratch folder is copied into the skill; a gated line in it gates the step", () => {
-  const dir = join(mkdtempSync(join(tmpdir(), "g2-helper-")), "scratchpad");
+  // Off Windows, /tmp itself: the run's random temp folder name can read as a secret (see skills-risk-escapes).
+  const dir = join(mkdtempSync(process.platform === "win32" ? join(tmpdir(), "g2-helper-") : "/tmp/g2-helper-"), "scratchpad");
   mkdirSync(dir, { recursive: true });
   const helper = join(dir, "npm-pty.mjs");
   const content = "#!/usr/bin/env node\n// npm publish behind a pty, so npm opens the browser itself\nimport { spawn } from 'node:child_process';\nspawn('npm', process.argv.slice(2), { stdio: 'inherit' });\n";
@@ -191,6 +192,13 @@ test("refusals: multi-line, truncated, outside-repo, step-too-long, scratch-path
   assert.match(refused(compile(sheet([call("node build.mjs --out /tmp/x/out.json")])), "scratch-path"), /\/tmp\/x\/out\.json/);
   // A scratch script the run didn't record as a helper is a scratch path too.
   refused(compile(sheet([call("bash /private/tmp/x/scratchpad/go.sh")])), "scratch-path");
+  // Windows' temp folder, with either slash and in any case, and a scratchpad under it.
+  for (const p of ["C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\x\\out.json", "c:/users/dev/appdata/local/temp/out.json", "/c/Users/dev/AppData/Local/Temp/out.json", "%TEMP%\\out.json", "$env:TMP\\out.json", "D:\\a\\_temp\\scratchpad\\out.json"]) {
+    assert.ok(refused(compile(sheet([call(`node build.mjs --out ${p}`)])), "scratch-path").includes(p), p);
+  }
+  assert.deepEqual(steps(compile(sheet([call("node C:\\Users\\dev\\AppData\\Local\\Tempest\\x.js")]))), ["node C:\\Users\\dev\\AppData\\Local\\Tempest\\x.js"]);
+  // Output logged into one is not what ran: the log goes, the step stays.
+  assert.deepEqual(steps(compile(sheet([call("npm run build > %TEMP%\\build.log 2>&1")]))), ["npm run build"]);
 });
 
 test("refusals: too-long (an overflowed run, or more than 12 steps), no-steps, no-check, never-save", () => {
