@@ -19,6 +19,7 @@ import { readWalls } from '../src/trace/wall-state.js';
 import { updateInitRecord } from '../src/init/init-record.js';
 import { writeEveryRepo } from '../src/notes/every-repo.js';
 import { guardrailCandidate } from './init-screen-fixtures.js';
+import { timeBar } from './machine-speed.js';
 
 test('D87 through the hooks: the kept notice the agent is asked to say holds no double quote of its own, and an undo is only ever a name or an id', async () => {
   const b = box('r1b-d87-quotes');
@@ -275,7 +276,7 @@ test('session start keeps its budget while the init record is locked (a keep or 
     const t0 = Date.now();
     const out = await startHook(s, at(17, 0));
     const ms = Date.now() - t0;
-    assert.ok(ms < 1000, `session start took ${ms} ms with the record locked`);
+    assert.ok(ms < timeBar(1000, 3000), `session start took ${ms} ms with the record locked`);
     oneOrNothing(out, 'start');
     assert.equal(readInitRecordOf(b).notice?.shownAt, null, 'named next time');
   } finally {

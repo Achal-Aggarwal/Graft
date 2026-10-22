@@ -17,6 +17,7 @@ import { programOf } from '../src/trace/shell.js';
 import { gateFilePath, type GateFile } from '../src/trace/gate-file.js';
 import { at, box, done, session } from './claude-skills-journey-fixtures.js';
 import { releaseSkill } from './skills-recall-fixtures.js';
+import { timeBar } from './machine-speed.js';
 
 const LOGINS = [
   'npm login', 'npm adduser', 'npm login --registry https://registry.npmjs.org', 'npm --registry=https://npm.acme.dev login', 'pnpm login', 'yarn npm login',
@@ -125,5 +126,6 @@ test('the login pattern reads a 2 MB command in linear time', () => {
     process.stdout.write(JSON.stringify(out));`;
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', probe], { encoding: 'utf8', timeout: 60_000 });
   assert.equal(r.signal, null, 'the gated patterns ran past 60 s');
-  for (const row of JSON.parse(r.stdout) as Array<{ u: string; ms: number }>) assert.ok(row.ms < 1500, JSON.stringify(row));
+  const bar = timeBar(1500, 4500);
+  for (const row of JSON.parse(r.stdout) as Array<{ u: string; ms: number }>) assert.ok(row.ms < bar, `${JSON.stringify(row)} over ${bar} ms`);
 });

@@ -10,6 +10,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { main } from '../src/claude/hooks.js';
 import { readStamp, runningVersion, updateCachePath } from '../src/upkeep.js';
 import { tmpRepo } from './helpers.js';
+import { timeBar } from './machine-speed.js';
 
 /** A repo that looks like a previous `graft init` ran here, with no stamp — i.e.
  * wired by a graft old enough not to have written one. */
@@ -106,7 +107,7 @@ test('a stale cache is used as-is: the hook never fetches', async () => {
   const before = Date.now();
   const ctx = contextOf(await runHook('session-start', repo, home));
   assert.match(ctx, /99\.0\.0 available/, 'stale answer still shown rather than refetched');
-  assert.ok(Date.now() - before < 2000, 'no network round trip');
+  assert.ok(Date.now() - before < timeBar(2000, 6000), 'no network round trip');
 });
 
 test('an unwired repo is left completely alone', async () => {

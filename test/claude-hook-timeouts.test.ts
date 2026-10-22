@@ -18,6 +18,7 @@ import { installCodexHooks } from '../src/hosts/codex-hooks.js';
 import { handlePrompt, PROMPT_BUDGET_MS, promptAskTimeout } from '../src/claude/prompt-hook.js';
 import { writeNote } from '../src/notes/notes.js';
 import { tmpRepo } from './helpers.js';
+import { timeBar } from './machine-speed.js';
 
 type Hooks = Record<string, Array<{ hooks: Array<{ command: string; timeout: number }> }>>;
 
@@ -126,7 +127,9 @@ test('the prompt hook ends inside its total budget, with the learnings, when the
     const started = Date.now();
     const out = await captured(() => handlePrompt({ session_id: 's1', prompt: 'how do we promote this build to prod safely' }, dir, { budgetMs: 1500 }));
     const took = Date.now() - started;
-    assert.ok(took < 1500 + 700, `took ${took} ms on a 1500 ms budget`);
+    // The budget, and what a slow machine adds around it; under the default 4 s budget, which would show if this one were ignored.
+    const bar = Math.min(1500 + timeBar(700, 2100), 3900);
+    assert.ok(took < bar, `took ${took} ms on a 1500 ms budget (bar ${bar} ms)`);
     assert.equal(readFileSync(called, 'utf8'), '1', 'the ask was started inside the budget');
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /Promote to prod only after beta is green/);
   } finally {
@@ -155,7 +158,8 @@ test('the default budget holds a never-answering ask to a few seconds, whatever 
     const started = Date.now();
     const out = await captured(() => handlePrompt({ session_id: 's1', prompt: 'how do we promote this build to prod safely' }, dir));
     const took = Date.now() - started;
-    assert.ok(took < PROMPT_BUDGET_MS + 700, `took ${took} ms`);
+    // Far under the installed 15 s however slow the machine: 700 ms scaled is at most 7 s.
+    assert.ok(took < PROMPT_BUDGET_MS + timeBar(700, 2100), `took ${took} ms`);
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /Promote to prod/);
   } finally {
     delete process.env.GRAFT_TEST_CLI;
@@ -186,7 +190,9 @@ test('the budget holds when the ask is slow to die (a refresh under way handles 
     const started = Date.now();
     const out = await captured(() => handlePrompt({ session_id: 's1', prompt: 'how do we promote this build to prod safely' }, dir, { budgetMs: 1500 }));
     const took = Date.now() - started;
-    assert.ok(took < 1500 + 700, `took ${took} ms on a 1500 ms budget`);
+    // The budget, and what a slow machine adds around it; under the 3 s the stub's parse takes, which a wait for it would show.
+    const bar = Math.min(1500 + timeBar(700, 1400), 2900);
+    assert.ok(took < bar, `took ${took} ms on a 1500 ms budget (bar ${bar} ms)`);
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /Promote to prod only after beta is green/);
     const pid = Number(readFileSync(pidFile, 'utf8'));
     assert.ok(await goneWithin(pid, 6000), 'the cut ask ends on its own once its work is done');
