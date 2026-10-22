@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { SURE_FAIL_REASON } from "../src/trace/guard-fast.js";
 import { detectRepairs, fixDelta, ignoredFailure } from "../src/trace/repairs.js";
 import type { RunCall } from "../src/trace/types.js";
@@ -210,7 +210,7 @@ test("relativizing: a root that prefixes another path, regex characters, a root 
 
 test("long commands: ignoredFailure stays linear on 2 MB (capped child process)", () => {
   const probe = `
-    import { ignoredFailure } from ${JSON.stringify(join(SRC, "trace", "repairs.ts"))};
+    import { ignoredFailure } from ${JSON.stringify(pathToFileURL(join(SRC, "trace", "repairs.ts")).href)};
     const n = 2 * 1024 * 1024;
     const c = (cmd, extra = {}) => ({ id: 'x', at: '', cmd, key: null, cwd: '', bg: false, failed: true, isError: true, kind: 'step', src: { use: 1, result: 2 }, ...extra });
     const rows = [];
@@ -224,6 +224,7 @@ test("long commands: ignoredFailure stays linear on 2 MB (capped child process)"
     process.stdout.write(JSON.stringify(rows));`;
   const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe], { encoding: "utf8", timeout: 60_000 });
   assert.equal(r.signal, null, "ignoredFailure ran past 60 s");
+  assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout) as number[];
   for (const ms of rows) assert.ok(ms < 1500, `2 MB took ${ms.toFixed(0)} ms (${JSON.stringify(rows.map(Math.round))})`);
 });

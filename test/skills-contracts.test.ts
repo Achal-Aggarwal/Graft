@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, lutimesSync, readFileSync, readdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpRepo } from "./helpers.js";
 import {
@@ -320,7 +320,7 @@ test("appendPrivateLine never writes through a symlink; writePrivate replaces th
 });
 
 test("trailPath joins under TRAIL_HOME or ~/.trail", () => {
-  assert.equal(trailPath({ TRAIL_HOME: "/tmp/x/home" }, "runs", "r-1.json"), "/tmp/x/home/runs/r-1.json");
+  assert.equal(trailPath({ TRAIL_HOME: "/tmp/x/home" }, "runs", "r-1.json"), resolve("/tmp/x/home", "runs", "r-1.json"));
   assert.match(trailPath({}, "settings.json"), /[\\/]\.trail[\\/]settings\.json$/);
 });
 

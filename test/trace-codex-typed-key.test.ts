@@ -28,7 +28,7 @@ test('the prompt hook makes state/typed-key (0600, 64 hex) and never reads or wr
     noteCodexPrompt(st, 'ship it', h.env);
     const file = join(h.env.TRAIL_HOME!, 'state', 'typed-key');
     assert.ok(existsSync(file), 'the key is made where D138 puts it');
-    assert.equal(lstatSync(file).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(lstatSync(file).mode & 0o777, 0o600);
     const key = readFileSync(file, 'utf8').trim();
     assert.match(key, /^[0-9a-f]{64}$/);
     assert.equal(readFileSync(join(h.env.TRAIL_HOME!, 'key'), 'utf8'), `${other}\n`, 'the other file is untouched');
