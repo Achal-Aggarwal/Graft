@@ -344,9 +344,17 @@ export function headlineOrder(files: string[]): string[] {
   return files.map((f, i) => ({ f, i, r: rank(f) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.f);
 }
 
+const COMMON_UTIL_NAMES = new Set(["cn", "utils", "index", "helpers", "main", "init", "config", "setup", "test"]);
+
+/** Whether a symbol name is worth measuring a lookup on: at least 5 characters and not a common util name. */
+export function meaningfulSymbol(name: string): boolean {
+  return name.length >= 5 && !COMMON_UTIL_NAMES.has(name.toLowerCase());
+}
+
 /**
  * One real lookup on the code map, as an agent would make it: a question
- * about the repo's most central symbol (most incoming edges) outside tests,
+ * about the repo's most central symbol (most incoming edges, with a name of
+ * 5+ characters that isn't a common util name) outside tests,
  * fixtures, vendored and generated code, answered with
  * the code inlined, and what that saved against reading the files it covers
  * whole. The next most central is tried when a lookup saves nothing (tiny
@@ -358,7 +366,9 @@ export function tokensOnOneLookup(repo: string, opts: { contextDir?: string; tri
     if (!graph) return null;
     // The most central symbols of the product code: tests, fixtures, vendored
     // and generated code only when there's nothing else.
-    const all = buildRepoMap(graph, { hotspots: 500 }).hotspots;
+    // A name worth asking about: a short or generic one (`cn`, `utils`, `main`)
+    // says nothing about the repo, so the example would be meaningless.
+    const all = buildRepoMap(graph, { hotspots: 500 }).hotspots.filter((h) => meaningfulSymbol(h.name));
     const product = all.filter((h) => !notProductCode(h.path));
     const hubs = (product.length ? product : all).slice(0, Math.max(1, opts.tries ?? 5));
     for (const hub of hubs) {
@@ -442,6 +452,21 @@ function git(repo: string, args: string[], timeout = 15_000): string | null {
 }
 
 const BOT = /\[bot\]|^(dependabot|github-actions|renovate)\b/i;
+
+/** Branches that are where work lands, not work in flight: nobody is "on" them. */
+const INTEGRATION_BRANCH = /^(main|master|dev|develop|staging|production|release\/.+)$/;
+
+/**
+ * Whether a remote branch is open work by someone: not the remote's default
+ * branch (`base`), not a shared integration branch, and not fully merged
+ * already (its tip is an ancestor of `base`).
+ */
+export function openBranch(repo: string, base: string, ref: string): boolean {
+  const name = ref.replace(/^origin\//, "");
+  if (ref === base || name === base.replace(/^origin\//, "") || INTEGRATION_BRANCH.test(name)) return false;
+  // `merge-base --is-ancestor` exits 0 when merged, 1 when not; git() returns null on a nonzero exit.
+  return git(repo, ["merge-base", "--is-ancestor", ref, base]) === null;
+}
 
 /** Files `email` changed in the last `days` days on any branch, plus what's uncommitted here. */
 export function myRecentFiles(repo: string, email: string, days = 30): string[] {
@@ -574,6 +599,7 @@ export function teammatesChecked(
     const out: TeammateSummary[] = [];
     for (const b of cache.branches) {
       if (now - b.at > days * 24 * 60 * 60 * 1000) continue;
+      if (!openBranch(repo, cache.base, b.ref)) continue;
       const [name = "", email = ""] = (git(repo, ["log", "-1", "--format=%aN%x09%aE", b.ref]) ?? "").trim().split("\t");
       if (!name || BOT.test(name)) continue;
       if ((me && email.toLowerCase() === me) || (myName && name.toLowerCase() === myName)) continue;

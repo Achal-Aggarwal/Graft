@@ -30,6 +30,8 @@ import {
   sessionsIn,
   shortBody,
   teammatesFromGit,
+  meaningfulSymbol,
+  openBranch,
   tokensOnOneLookup,
 } from "../src/cloud/onboarding.js";
 import { readCloud, writeCloud, type Cloud } from "../src/cloud/workspace.js";
@@ -249,6 +251,25 @@ test("the lookup is about product code: a test helper everyone calls is passed o
   assert.equal(tokensOnOneLookup(onlyTests)?.symbol, "tmpRepo", "nothing else to measure: a test helper it is");
 });
 
+test("the lookup skips short and generic names: cn has the most callers, the next eligible symbol is measured", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "connect-tokens-cn-"));
+  const filler = Array.from({ length: 300 }, (_, i) => `export function helper${i}(x: number): number {\n  return x * ${i} + ${i};\n}\n`).join("\n");
+  writeFileSync(join(dir, "client.ts"), `export function retryDo(attempts: number): number {\n  return attempts;\n}\n\n${filler}`);
+  writeFileSync(join(dir, "cn.ts"), `export function cn(a: string): string {\n  return a;\n}\n\n${filler}`);
+  for (const f of ["a", "b"]) writeFileSync(join(dir, `${f}.ts`), `import { retryDo } from "./client";\nexport function use${f}() {\n  return retryDo(4);\n}\n`);
+  for (const f of ["c", "d", "e", "f", "g", "h"]) writeFileSync(join(dir, `${f}.ts`), `import { cn } from "./cn";\nexport function use${f}() {\n  return cn("x");\n}\n`);
+  await buildGraph(dir);
+  const { buildRepoMap } = await import("../src/graph/map.js");
+  const { loadGraphCached } = await import("../src/graph/load.js");
+  const { contextDirFor } = await import("../src/context/node-file.js");
+  assert.equal(buildRepoMap(loadGraphCached(contextDirFor(dir))!).hotspots[0]!.name, "cn", "cn is the most central symbol");
+  const t = tokensOnOneLookup(dir);
+  assert.ok(t);
+  assert.equal(t.symbol, "retryDo");
+  for (const n of ["cn", "utils", "index", "helpers", "main", "init", "config", "setup", "test", "Utils", "Main"]) assert.ok(!meaningfulSymbol(n), n);
+  for (const n of ["retryDo", "client", "Handler"]) assert.ok(meaningfulSymbol(n), n);
+});
+
 test("the offline line names the Trail it tried once, and the command to connect later carries --server unless it's Trail cloud", () => {
   assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://app.trailhq.com"), "trail init --connect TRL-7F2A-K9QD");
   assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://dev.trailhq.com"), "trail init --connect TRL-7F2A-K9QD --server https://dev.trailhq.com");
@@ -353,6 +374,42 @@ test("teammates: others' branches pushed in the last 14 days that change the fil
   assert.ok(Math.abs(Date.parse(k.pushed_at) - Date.now()) < DAY);
   // Names, branch and file names and subjects only: no diff.
   assert.ok(!JSON.stringify(got).includes("defaultRetryMax = 10"));
+});
+
+test("teammates come only from open branches: not the default branch, integration branches or merged ones", () => {
+  const { clone } = team();
+  const me = clone("rushabh", "Rushabh Nagda");
+  const ritu = clone("ritu", "Ritu N");
+  const sumanth = clone("sumanth", "Sumanth S");
+  const priya = clone("priya", "Priya R");
+  const mina = clone("mina", "Mina M");
+  // My own work, so the files that count are client.go and README.md.
+  pushBranch(me, "rushabh/mine", { "client.go": "package retry\n// mine\n", "README.md": "# mine\n" }, "Mine");
+  git(me, "checkout", "-q", "main");
+  // Ritu's commit lands on main: merged, nobody's open work.
+  git(ritu, "checkout", "-q", "main");
+  writeFileSync(join(ritu, "client.go"), "package retry\n// ritu\n");
+  git(ritu, "add", "-A");
+  git(ritu, "-c", "user.name=Ritu N", "-c", "user.email=ritu@acme.test", "commit", "-qm", "Ritu merged this");
+  git(ritu, "push", "-q", "origin", "main");
+  // Sumanth works on a long-lived dev branch, ahead of main (so not merged), and on a release branch.
+  pushBranch(sumanth, "dev", { "client.go": "package retry\n// dev\n" }, "Dev work");
+  pushBranch(sumanth, "release/1.2", { "README.md": "# release\n" }, "Release prep");
+  pushBranch(sumanth, "staging", { "client.go": "package retry\n// staging\n" }, "Staging work");
+  // Mina's feature branch is fully merged into main (an ancestor of it).
+  git(mina, "fetch", "-q", "origin");
+  git(mina, "checkout", "-q", "-b", "mina/done", "origin/main~0");
+  git(mina, "push", "-q", "origin", "mina/done");
+  // Priya has the one open feature branch.
+  git(priya, "fetch", "-q", "origin");
+  pushBranch(priya, "priya/feature", { "client.go": "package retry\n// priya\n" }, "Priya feature");
+  git(me, "fetch", "-q", "origin");
+  const got = teammatesFromGit(me);
+  assert.deepEqual(got.map((t) => `${t.name} on ${t.branch}`), ["Priya R on priya/feature"], JSON.stringify(got));
+  assert.ok(!openBranch(me, "origin/main", "origin/main"));
+  assert.ok(!openBranch(me, "origin/main", "origin/dev"), "named like an integration branch");
+  assert.ok(!openBranch(me, "origin/main", "origin/mina/done"), "merged");
+  assert.ok(openBranch(me, "origin/main", "origin/priya/feature"));
 });
 
 test("with no history of your own here, teammates are matched on the repo's busiest files", () => {
