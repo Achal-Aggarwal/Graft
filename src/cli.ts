@@ -72,7 +72,7 @@ import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readClo
 import { inWorkspace, maybeSyncInBackground, recordActivity, runSyncChild, syncRepo, workspaceLearnings } from "./cloud/workspace-sync.js";
 import type { CheckResult } from "./check/types.js";
 import { checkLocally } from "./check/local-check.js";
-import { findLearning, liveLearnings } from "./notes/learning-fields.js";
+import { findLearning, learningFileName, liveLearnings } from "./notes/learning-fields.js";
 import { savedIdLine } from "./notes/replace.js";
 import { formatOverlap, maybeRefreshBranches, overlapsWith, pushedWhen, readBranchCache, refreshBranches } from "./notes/branches.js";
 import { ensureRepoTrail, LEARNINGS_DIR } from "./notes/repo-trail.js";
@@ -2156,7 +2156,7 @@ async function runTeamCheck(dir: string, opts: { base?: string; json?: boolean }
     asker: me,
     session: sessionKey(repo) ?? `${me}-${new Date().toISOString().slice(0, 10)}`,
     file_count: files.length,
-    shown_paths: [...new Set(sources.map((s) => s.path!.slice(s.path!.lastIndexOf("/") + 1)))],
+    shown_paths: [...new Set(sources.map((s) => learningFileName(s.path!)))],
     shown_authors: [...new Set(sources.map((s) => s.author ?? ""))],
     at: new Date().toISOString(),
   });
