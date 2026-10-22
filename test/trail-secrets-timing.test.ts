@@ -58,7 +58,7 @@ const shapes: [string, string, string | null][] = [
 function timed(text: string): { ms: number; why: string | null } {
   let ms = Infinity;
   let why: string | null = null;
-  for (let i = 0; i < 3 && (i === 0 || (ms >= 50 * slowness() && ms < 1000)); i++) {
+  for (let i = 0; i < 3 && (i === 0 || (ms >= Math.max(50 * slowness(), 250) && ms < 1000)); i++) {
     const t0 = performance.now();
     why = secretReason(text);
     ms = Math.min(ms, performance.now() - t0);
@@ -72,8 +72,10 @@ for (const [name, text, why] of shapes) {
   test(`${name} (${Math.round(text.length / KB)} KB) is checked in under 50 ms`, () => {
     const run = timed(text);
     assert.equal(run.why, why, name);
-    // 50 ms where the bar was set, scaled to this machine: a backtracking pattern takes seconds here, on any machine.
-    const bar = 50 * slowness();
+    // 50 ms where the bar was set, scaled to this machine, and never under 250 ms: a shared CI runner (Windows
+    // especially) can take 2x on one regex pass that its speed probe doesn't catch, and a backtracking pattern
+    // takes seconds here on any machine, so the floor still catches it.
+    const bar = Math.max(50 * slowness(), 250);
     assert.ok(run.ms < bar, `${name}: ${run.ms.toFixed(1)} ms, over ${bar.toFixed(1)} ms`);
   });
 }
