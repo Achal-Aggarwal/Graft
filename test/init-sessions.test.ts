@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { discoverSessions, readSession } from "../src/init/sessions.js";
+import { discoverSessions, readSession, within } from "../src/init/sessions.js";
 import { tmpRepo } from "./helpers.js";
 
 // Days are local dates (init-days.test.ts); these fixtures are written in UTC.
@@ -156,4 +156,16 @@ test("discovery off the main thread finds exactly what it finds on it", async ()
   const off = await discoverOffThread(w.repo, w.home, envOf(w));
   assert.deepEqual(off, discoverSessions(w.repo, w.home, undefined, envOf(w)));
   assert.equal(off.sessions.length, 2);
+});
+
+test("on Windows a worktree git lists as C:/a/wt holds a session whose cwd says C:\\A\\wt\\src", () => {
+  const was = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    assert.ok(within("C:\\A\\wt\\src", ["C:/a/wt"]));
+    assert.ok(within("C:\\a\\wt", ["C:/a/wt"]));
+    assert.ok(!within("C:\\a\\wt-old", ["C:/a/wt"]), "a sibling with a longer name is not inside");
+  } finally {
+    Object.defineProperty(process, "platform", was);
+  }
 });
