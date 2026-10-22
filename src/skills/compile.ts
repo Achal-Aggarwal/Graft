@@ -34,7 +34,7 @@ import { STABLE_BRANCHES, findParams, paramsToMeta } from './params.js';
 import { renderSkillMd } from './skillmd.js';
 import { skillProblems } from './validate.js';
 import { type CompileRefusal, askPhrases, askedJob, carriedSteps, describe, elsewhereLines, freeName, goodName, jobWords, toolCheckWords } from './compile-words.js';
-import { type LoopWait, splitSheet, stripScratchLog } from './compile-split.js';
+import { type LoopWait, WIN_TEMP, splitSheet, stripScratchLog } from './compile-split.js';
 import { answersPrompt, loginFeed } from './answers-prompt.js';
 import { checkShowsFor, shownVersion, versionShaped, versionTie } from './compile-version.js';
 import { findWaits } from './compile-waits.js';
@@ -81,8 +81,8 @@ const WAIT_TAIL = 'do [ $((SECONDS-s)) -ge 300 ] && echo "not ready after 5 min"
 const PROBE = /^(?:command -v [\w.+-]+|test -[SfdeE] \S+|\[ -S \S+ \]|git rev-parse --verify \S+)$/;
 const PORCELAIN = 'git status --porcelain';
 const CHECK_FIRST = /^(?:npm whoami|gh auth status|aws sts get-caller-identity|gcloud auth list|vercel whoami|docker info|colima status)(?:\s+-{1,2}[\w-]+(?:[= ]\S+)?)*$/;
-/** A token that is a scratch path: /tmp, /private/tmp, /var/folders, $TMPDIR, or a /scratchpad/ segment. */
-const SCRATCH = /(?<![\w.~$-])(?:\/private)?\/(?:tmp|var\/folders)\/[^\s'"`;|&()<>,]*|\$\{?TMPDIR\}?[^\s'"`;|&()<>,]*|[^\s'"`;|&()<>,=]*\/scratchpad\/[^\s'"`;|&()<>,]*/g;
+/** A token that is a scratch path: /tmp, /private/tmp, /var/folders, $TMPDIR, a scratchpad segment, or Windows' temp folder. */
+const SCRATCH = new RegExp(String.raw`(?<![\w.~$-])(?:\/private)?\/(?:tmp|var\/folders)\/[^\s'"\`;|&()<>,]*|\$\{?TMPDIR\}?[^\s'"\`;|&()<>,]*|[^\s'"\`;|&()<>,=]*[\\/]scratchpad[\\/][^\s'"\`;|&()<>,]*|${WIN_TEMP}[^\s'"\`;|&()<>,]*`, 'g');
 const PLAIN = /^(?:npm (?:run )?[\w:.-]+|pnpm (?:run )?[\w:.-]+|yarn (?:run )?[\w:.-]+|make [\w.-]+|go test \.\/\.\.\.)$/;
 
 type Role = 'step' | 'wait' | 'poll' | 'check' | 'probe' | 'checkFirst' | 'failed' | 'left';

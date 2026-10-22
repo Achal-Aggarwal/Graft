@@ -418,8 +418,17 @@ export function splitSheet(sheet: RunSheet, ctx: { repoRoot: string; home: strin
   return { sheet: { ...sheet, calls, checkIndex }, blocked, waits, parts };
 }
 
-/** A scratch file a step's output went into: `> /tmp/dev.log 2>&1`, `>> "$TMPDIR/x"`, `| tee …/scratchpad/t.log`. */
-const SCRATCH_FILE = '(["\']?)(?:(?:\\/private)?\\/(?:tmp|var\\/folders)\\/|\\$\\{?TMPDIR\\}?\\/?|[^\\s\'"`;|&()<>,=]*\\/scratchpad\\/)[^\\s\'"`;|&()<>,]*\\1';
+/** `Temp` matched in any case (`[Tt][Ee]…`): Windows paths ignore it. */
+const anyCase = (w: string) => w.replace(/[a-z]/gi, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
+const SEG = String.raw`[^\\/\s'"\`;|&()<>,]`;
+/**
+ * Windows' temp folders, with either slash: the person's `AppData\Local\Temp` (as `C:\` or Git Bash's `/c/`),
+ * `Windows\Temp`, `%TEMP%` and `$env:TEMP`. What follows the folder is left to the caller.
+ */
+export const WIN_TEMP = String.raw`(?:(?<![\w.~$-])(?:[A-Za-z]:|\/[A-Za-z])[\\/](?:${anyCase('users')}[\\/]${SEG}+[\\/]${anyCase('appdata')}[\\/]${anyCase('local')}[\\/]${anyCase('temp')}|${anyCase('windows')}[\\/]${anyCase('temp')})(?!${SEG})|%${anyCase('t')}${anyCase('e')}?${anyCase('mp')}%|\$${anyCase('env')}:${anyCase('t')}${anyCase('e')}?${anyCase('mp')}(?!\w))`;
+
+/** A scratch file a step's output went into: `> /tmp/dev.log 2>&1`, `>> "$TMPDIR/x"`, `| tee …/scratchpad/t.log`, `> %TEMP%\x.log`. */
+const SCRATCH_FILE = String.raw`(["']?)(?:(?:\/private)?\/(?:tmp|var\/folders)\/|\$\{?TMPDIR\}?\/?|[^\s'"\`;|&()<>,=]*[\\/]scratchpad[\\/]|${WIN_TEMP}[\\/]?)[^\s'"\`;|&()<>,]*\1`;
 const LOG_TAIL = [new RegExp(String.raw`\s+(?:\d?>>?|&>>?)\s*${SCRATCH_FILE}$`), new RegExp(String.raw`\s*\|\s*tee(?:\s+-a)?\s+${SCRATCH_FILE}$`)];
 
 /** Where the output went is not what ran: a trailing log into a scratch folder goes (with its `2>&1`), the step stays. */
