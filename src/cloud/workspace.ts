@@ -225,8 +225,10 @@ export function addRepo(c: Cloud, repo: { key: string; name: string }, fetchImpl
 }
 
 export interface UploadedLearning {
-  /** `.trail/learnings/<name>`. */
+  /** `.trail/learnings/<name>`, or `.claude/skills/<name>/SKILL.md` for a skill. */
   path: string;
+  /** "skill" for a skill of the repo; a plain learning leaves it out. */
+  kind?: "skill";
   /** "" for the working tree, or the pushed branch it was found on (`origin/kumar/x`). */
   ref: string;
   branch?: string;

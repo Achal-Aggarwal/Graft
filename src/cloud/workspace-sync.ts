@@ -19,13 +19,15 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, sep } from "node:path";
 import { graftCliPath } from "../claude/paths.js";
 import { readBranchCache, refreshBranches } from "../notes/branches.js";
 import { knownRepos, repoName, repoPlace, trailHome } from "../notes/home.js";
 import { LEARNINGS_DIR, learningFiles, readLearningFile } from "../notes/repo-trail.js";
 import { parseNote } from "../notes/notes.js";
+import { OWN_SKILLS, skillDirs } from "../skills/skills.js";
+import { matter } from "../util/front-matter.js";
 import { cacheDir, readJson, writeJsonAtomic } from "../util/state.js";
 import { isError, postActivity, readCloud, uploadLearnings, type ActivityEvent, type ApiError, type Cloud, type UploadedLearning } from "./workspace.js";
 
@@ -39,10 +41,65 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** A skill folder name safe to send as a path part. */
+const SKILL_FOLDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function inside(root: string, p: string): boolean {
+  return p === root || p.startsWith(root + sep);
+}
+
+/**
+ * The repo's skills, as the workspace takes them: each `.claude/skills/<name>/SKILL.md`
+ * in the working tree. Same item as the one init sends for a skill it just found
+ * (the server keeps one per repo and path): the body is SKILL.md without its
+ * frontmatter, the hash is of the whole file. A symlinked skill is read only when
+ * it resolves inside the checkout. A SKILL.md that can't be read or parsed is
+ * skipped. Skills kept in ~/.trail are never sent.
+ */
+function skillItems(checkout: string): UploadedLearning[] {
+  const dir = skillDirs(checkout).repo;
+  let root: string;
+  let names: string[];
+  try {
+    root = realpathSync(join(dir, "..", ".."));
+    names = readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+  const out: UploadedLearning[] = [];
+  for (const name of names) {
+    if (!SKILL_FOLDER.test(name) || OWN_SKILLS.has(name)) continue;
+    try {
+      const file = join(dir, name, "SKILL.md");
+      if (!statSync(join(dir, name)).isDirectory() || !statSync(file).isFile()) continue;
+      if (!inside(root, realpathSync(join(dir, name))) || !inside(root, realpathSync(file))) continue;
+      const text = readFileSync(file, "utf8");
+      const parsed = matter(text);
+      const d = parsed.data as Record<string, unknown>;
+      const description = typeof d.description === "string" ? (d.description.trim().split("\n")[0] ?? "").trim() : "";
+      out.push({
+        path: `.claude/skills/${name}/SKILL.md`,
+        kind: "skill",
+        ref: "",
+        title: description || name,
+        author: typeof d.author === "string" ? d.author.trim() : "",
+        date: "",
+        touches: [],
+        body: parsed.content.trim(),
+        hash: sha256(text),
+      });
+    } catch {
+      /* no SKILL.md, or one that can't be read or parsed */
+    }
+  }
+  return out;
+}
+
 /**
  * Every learning in the repo's `.trail/`, as the workspace takes them: the
  * working tree's, then the ones only a pushed branch has (from the branch
- * cache). Paths are repo-relative; nothing about this machine is sent.
+ * cache), then the repo's skills. Paths are repo-relative; nothing about this
+ * machine is sent.
  */
 export function learningsPayload(checkout: string): UploadedLearning[] {
   const out: UploadedLearning[] = [];
@@ -71,6 +128,7 @@ export function learningsPayload(checkout: string): UploadedLearning[] {
     if (text) add(name, text, "");
   }
   for (const b of readBranchCache(checkout)?.branches ?? []) for (const l of b.learnings) add(l.name, l.text, b.ref);
+  out.push(...skillItems(checkout));
   return out;
 }
 

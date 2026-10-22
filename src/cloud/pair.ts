@@ -122,7 +122,7 @@ export class PairRun {
     const current = place.git ? { key: place.key, name: repoName(place.key, place.checkout) } : null;
     // This repo first, with the learnings it already has: init hasn't told
     // Trail about it yet, so the list of known repos may not have it.
-    const here = place.git ? learningsPayload(place.checkout).filter((l) => l.ref === "").length : 0;
+    const here = place.git ? learningsPayload(place.checkout).filter((l) => l.ref === "" && l.kind !== "skill").length : 0;
     const known = pickerRepos().filter((r) => r.key !== current?.key);
     if (current) known.unshift({ ...current, learnings: here });
     const reg = await registerHandoff(
@@ -162,7 +162,7 @@ export class PairRun {
     const found: Record<string, unknown>[] = place.git
       ? [
           ...learningsPayload(place.checkout)
-            .filter((l) => l.ref === "")
+            .filter((l) => l.ref === "" && l.kind !== "skill")
             .map((l) => ({ kind: "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches })),
           ...skills.flatMap((s) => foundSkillItem(place.checkout, s)),
         ]
