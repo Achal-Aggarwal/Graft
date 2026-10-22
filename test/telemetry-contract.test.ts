@@ -183,7 +183,7 @@ test('hookMsBucket collapses a hook time to a label', () => {
 test('TELEMETRY.md lists every event and every key the contract allows, and no event the contract lacks', () => {
   const doc = readFileSync(join(process.cwd(), 'TELEMETRY.md'), 'utf8');
   const rows = new Map<string, string>();
-  for (const line of doc.split('\n')) {
+  for (const line of doc.split(/\r?\n/)) {
     const m = /^\| `([a-z_]+)` \|(.*)$/.exec(line);
     if (m && !['app_version', 'os', 'arch', 'node_major', 'ci', 'agent_host', 'cli_name', 'repo_id'].includes(m[1]!)) rows.set(m[1]!, m[2]!);
   }

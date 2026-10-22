@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BRAND_ENV } from "../src/brand.js";
-import { main } from "../src/claude/hooks.js";
+import { handlePrompt } from "../src/claude/prompt-hook.js";
 import { writeCloud, type Cloud } from "../src/cloud/workspace.js";
 import { buildGraph } from "../src/graph/build.js";
 import { tmpRepo } from "./helpers.js";
@@ -102,12 +102,12 @@ test("a prompt's ask in a connected repo queues a use of the learnings, never a 
   process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => (typeof chunk === "string" ? ((said += chunk), true) : (write as (...a: unknown[]) => boolean)(chunk, ...rest))) as typeof process.stdout.write;
   process.env.CLAUDE_PROJECT_DIR = d;
   process.env.GRAFT_TEST_CLI = cliFromSource();
-  process.env.GRAFT_TEST_STDIN = JSON.stringify({ session_id: "s1", prompt: PROMPT });
   try {
-    await main("prompt");
+    // The hook's own budget is 4 s; an ask child started from source through tsx can take longer than that on a
+    // slow runner (Windows), so the hook is given the installed 60 s here: what is under test is what the child keeps.
+    await handlePrompt({ session_id: "s1", prompt: PROMPT }, d, { budgetMs: 60_000 });
   } finally {
     process.stdout.write = write;
-    delete process.env.GRAFT_TEST_STDIN;
     delete process.env.GRAFT_TEST_CLI;
     delete process.env.CLAUDE_PROJECT_DIR;
   }

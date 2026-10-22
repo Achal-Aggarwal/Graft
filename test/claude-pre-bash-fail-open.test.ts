@@ -5,7 +5,7 @@
  * can't be found (started in a subfolder without CLAUDE_PROJECT_DIR, the shim
  * gone after an uninstall, no node on PATH) would deny every shell command.
  * These tests run the exact command strings the installs write, through the
- * platform shell, the way a host runs them.
+ * shell a host runs them in (sh, or Git Bash for Claude Code on Windows).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +17,7 @@ import { installCodexHooks } from '../src/hosts/codex-hooks.js';
 import { globalCopyCovers } from '../src/claude/hook-layers.js';
 import { hooksShim } from '../src/claude/shim-template.js';
 import { toPosixPath } from '../src/util/paths.js';
-import { tmpRepo } from './helpers.js';
+import { hookShell, tmpRepo } from './helpers.js';
 
 const PAYLOAD = JSON.stringify({ session_id: 's1', cwd: '/tmp/x', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } });
 
@@ -35,9 +35,12 @@ function commands(home: string): Record<string, string> {
   };
 }
 
-/** Runs `command` through the platform shell (sh, or cmd on Windows), as hosts do. */
+const SHELL = hookShell();
+const NO_SHELL = SHELL === null && 'no Git Bash on this Windows machine, the shell Claude Code runs hooks in';
+
+/** Runs `command` through the shell hosts run hooks in (sh, or Git Bash on Windows: cmd can't expand `${CLAUDE_PROJECT_DIR:-.}`). */
 function run(command: string, cwd: string, env: NodeJS.ProcessEnv) {
-  return spawnSync(command, { shell: true, cwd, input: PAYLOAD, encoding: 'utf8', timeout: 20000, env });
+  return spawnSync(command, { shell: SHELL ?? true, cwd, input: PAYLOAD, encoding: 'utf8', timeout: 20000, env });
 }
 
 /** The environment of a host started somewhere CLAUDE_PROJECT_DIR isn't set. */
@@ -53,7 +56,7 @@ test('every PreToolUse command Trail writes ends in a shell-level fail-open', ()
   }
 });
 
-test('a PreToolUse command whose script is missing exits 0 and prints nothing on stdout', () => {
+test('a PreToolUse command whose script is missing exits 0 and prints nothing on stdout', { skip: NO_SHELL }, () => {
   const home = tmpRepo('fail-open-missing');
   // A subfolder of a project with no .claude/ of its own, as when a host
   // starts there without CLAUDE_PROJECT_DIR; every shim path is missing.
@@ -78,7 +81,7 @@ test('a PreToolUse command exits 0 with no output when node is not on PATH', { s
   }
 });
 
-test('the fail-open form still runs the shim with the event, and its answer reaches the host', () => {
+test('the fail-open form still runs the shim with the event, and its answer reaches the host', { skip: NO_SHELL }, () => {
   const project = tmpRepo('fail-open-present');
   const helpers = join(project, '.claude', 'helpers');
   mkdirSync(helpers, { recursive: true });

@@ -5,7 +5,8 @@
  * the untracked `.claude/helpers/trail-hooks.cjs` while the tracked
  * `.claude/settings.json` still names it; then Stop, the prompt hook and
  * SessionStart used to exit 1 on every turn. These tests run the exact
- * command strings the installs write, through the platform shell, with a
+ * command strings the installs write, through the shell Claude Code runs
+ * hooks in (sh, or Git Bash on Windows), with a
  * payload like the host's. The next `trail init` repairs older wiring.
  * Made-up folders only; every run gets its own HOME and TRAIL_HOME.
  */
@@ -18,7 +19,7 @@ import { mergeGraftHooks, mergeGraftSettings } from '../src/claude/settings-merg
 import { installCodexHooks } from '../src/hosts/codex-hooks.js';
 import { installCursorHooks } from '../src/hosts/cursor-hooks.js';
 import { toPosixPath } from '../src/util/paths.js';
-import { tmpRepo } from './helpers.js';
+import { hookShell, tmpRepo } from './helpers.js';
 
 type Cmd = { where: string; event: string; command: string };
 
@@ -53,11 +54,15 @@ function payload(event: string, cwd: string): string {
 }
 
 function hostEnv(home: string, project: string): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH ?? '', HOME: home, USERPROFILE: home, TRAIL_HOME: join(home, '.trail'), CLAUDE_PROJECT_DIR: project };
+  const win = process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, PATHEXT: process.env.PATHEXT } : {};
+  return { PATH: process.env.PATH ?? '', HOME: home, USERPROFILE: home, TRAIL_HOME: join(home, '.trail'), CLAUDE_PROJECT_DIR: project, ...win };
 }
 
+const SHELL = hookShell();
+const NO_SHELL = SHELL === null && 'no Git Bash on this Windows machine, the shell Claude Code runs hooks in';
+
 function run(command: string, cwd: string, input: string, env: NodeJS.ProcessEnv) {
-  return spawnSync(command, { shell: true, cwd, input, encoding: 'utf8', timeout: 20000, env });
+  return spawnSync(command, { shell: SHELL ?? true, cwd, input, encoding: 'utf8', timeout: 20000, env });
 }
 
 test('every hook command Trail writes, on every event, ends in a shell-level fail-open', () => {
@@ -66,7 +71,7 @@ test('every hook command Trail writes, on every event, ends in a shell-level fai
   for (const c of cmds) assert.match(c.command, /^node "[^"]+-hooks\.cjs" [\w-]+ \|\| exit 0$/, `${c.where} ${c.event}`);
 });
 
-test('the lab case: settings.json kept, the helper stashed away; Stop, prompt and session-start exit 0 and print nothing', () => {
+test('the lab case: settings.json kept, the helper stashed away; Stop, prompt and session-start exit 0 and print nothing', { skip: NO_SHELL }, () => {
   const home = tmpRepo('fail-open-stash-home');
   const project = tmpRepo('fail-open-stash-project');
   // Only the tracked settings remain, as after `git stash -u`: no .claude/helpers/ at all.
@@ -80,7 +85,7 @@ test('the lab case: settings.json kept, the helper stashed away; Stop, prompt an
   }
 });
 
-test('with the helper there, each command still runs it with its event and prints its one JSON object, even when it exits non-zero', () => {
+test('with the helper there, each command still runs it with its event and prints its one JSON object, even when it exits non-zero', { skip: NO_SHELL }, () => {
   const home = tmpRepo('fail-open-present-home');
   const project = tmpRepo('fail-open-present-project');
   const helpers = join(project, '.claude', 'helpers');

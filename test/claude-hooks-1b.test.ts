@@ -15,8 +15,6 @@ import { everyRepoDir, writeEveryRepo } from '../src/notes/every-repo.js';
 import { writeLesson } from '../src/skills/lessons.js';
 import { guardrailLearning } from '../src/notes/guardrails.js';
 import { stopSkillsRun } from '../src/claude/stop-skills.js';
-import { FIXED_DIRS } from '../src/trace/guard-fast.js';
-import { statSync } from 'node:fs';
 import { keepReceiptPath } from '../src/init/keep-gate.js';
 import { keepCommand } from '../src/init/keep.js';
 import { offerLinesOf } from '../src/skills/offer-lines.js';
@@ -26,7 +24,7 @@ import { relayLines } from '../src/init/review-screen.js';
 import type { InitItem } from '../src/init/types.js';
 import { factsOf, guardrailCandidate, skillCandidate } from './init-screen-fixtures.js';
 import {
-  agentRuns, at, box, cli, CWD, done, finish, hook, ls, offersLog, one, pathWithoutTimeout, preBashHook, promptHook, ran, release, reply, sayOfferLines, session, SHOP, skillsKept, startHook, stateOf, typedLine,
+  agentRuns, at, box, cli, CWD, done, finish, hook, ls, offersLog, one, pathWithoutTimeout, preBashHook, promptHook, ran, release, reply, sayOfferLines, session, SHOP, skillsKept, startHook, stateOf, timeoutSeen, typedLine,
   type Box, type Session,
 } from './claude-skills-journey-fixtures.js';
 import { allowedValue, EVENTS } from '../src/telemetry/contract.js';
@@ -167,10 +165,8 @@ test('J06 end to end: day 1 hits the docker wall and gets the fix, Stop records 
   }
 });
 
-/** A machine with a real `timeout` in a system folder of 4.11 can't show a deny. */
-const SYSTEM_TIMEOUT = FIXED_DIRS.filter((d) => !d.startsWith('$HOME')).some((d) => {
-  try { return statSync(join(d.replace('$USER', process.env.USER ?? ''), 'timeout')).isFile(); } catch { return false; }
-}) && 'this machine has a timeout in a system folder';
+/** A machine where Trail still finds a `timeout` (a system folder of 4.11, or Windows' System32) can't show a deny. */
+const SYSTEM_TIMEOUT = timeoutSeen();
 
 /** Stop's skills part in this process, with the telemetry it collected (the hook queues it; the test reads it). */
 const stopSent = (s: Session, iso: string, said: string) => stopSkillsRun({ ...s.payload, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: said }, s.b.project,
