@@ -57,11 +57,13 @@ import { normalizePathPrefix } from "./util/paths.js";
 import { latestSession, formatSessionStats, sessionInputRate } from "./claude/session-metrics.js";
 import { listSessionIds, readSession, sessionDir } from "./claude/state.js";
 import { costLabel, listNotes, noteName, notePlace, noteTargets, readingTokens, savedByNote, commitLines, PERSONAL_SAVED_LINE, PR_SPEEDUP, SECTIONS, tokensWorthSaying, sectionLead, shortDate, tokensLabel, writeNote, type Note, mentionedFiles } from "./notes/notes.js";
+import { findLearning, liveLearnings } from "./notes/learning-fields.js";
 import { aboutTerms, currentSessionCost } from "./notes/session-cost.js";
 import { beginPastRead, finishPastRead, type Finding } from "./notes/cold-start.js";
 import { anchoredReviews, beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/pr-reviews.js";
 import { finishMemoryRead, memoryCandidates, offeredBefore, type MemoryCandidate } from "./notes/memory-notes.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
+import { gateNote, namesRepoSymbol, symbolCandidates, trackedFiles } from "./notes/note-gate.js";
 import { confirm, fold, getSkill, learn, listSkills, publish, skillForAgent, skillName, skillStatus, type LearnResult } from "./skills/skills.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
 import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, writeCloud, type Cloud } from "./cloud/workspace.js";
@@ -1142,6 +1144,8 @@ grouped(program.command("note", { hidden: !TRAIL }), GROUP.memory)
   .option("--author <name>", "who wrote it (default: the first word of git config user.name)")
   .option("--minutes <n>", "what it took to work out, when the agent's transcript can't say")
   .option("--tokens <n>", "the same, in tokens")
+  .option("--replaces <file>", "an earlier learning this one takes over from (its file name in .trail/learnings/); the old file stays")
+  .option("--anyway", "save it even if trail's checks (names code, says why, not status, not a repeat) turn it away")
   .option("--json", "print the saved learning as JSON")
   .argument("[dir]", "repository root", ".")
   .action(async (dir: string, opts: NoteOptions) => {
@@ -1331,6 +1335,8 @@ interface NoteOptions {
   tokens?: string;
   json?: boolean;
   personal?: boolean;
+  replaces?: string;
+  anyway?: boolean;
 }
 
 async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
@@ -1371,14 +1377,56 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
         // Then the files the note names, then the ones the session only read.
         touches: [...new Set([...t.touches, ...mentionedFiles(t.dir, body), ...(t.read ?? [])])].slice(0, 10),
       }));
+  // A touch is a file git tracks or one this session edited: never a file
+  // that was just lying around (a token, a scratch file).
+  const real = (dir: string, files: string[]): string[] => {
+    const tracked = trackedFiles(dir, files.map((f) => f.split("#")[0]!));
+    const edited = new Set((spent?.edited ?? []).map((f) => relative(dir, f).split("\\").join("/")));
+    return files.filter((f) => tracked.has(f.split("#")[0]!) || edited.has(f.split("#")[0]!));
+  };
+  for (const t of targets) t.touches = real(t.dir, t.touches);
+  const scope = opts.personal ? "personal" : "repo";
+  const primary = targets[0]!;
+  const existing = listNotes(primary.dir, { branches: false });
+  let old: Note | undefined;
+  if (opts.replaces) {
+    const want = basename(opts.replaces.trim());
+    old = findLearning(existing, want);
+    if (!old) {
+      console.error(`✗ --replaces: no learning named ${want} here. The names are the files in .trail/learnings/.`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+  // What `replaces:` holds is the old learning's id (learning-fields.ts), not its file name.
+  const replaces = old?.id;
+  const text = `${opts.title}\n${body}`;
+  const gate = gateNote(
+    {
+      title: opts.title,
+      body,
+      personal: scope === "personal",
+      files: real(primary.dir, [...new Set([...mentionedFiles(primary.dir, text), ...(opts.touches ? primary.touches : [])])]),
+      namesSymbol: namesRepoSymbol(primary.dir, symbolCandidates(text)),
+      touches: primary.touches,
+      replaces,
+    },
+    liveLearnings(existing).filter((n) => (n.scope ?? "repo") === scope),
+  );
+  if (gate.problems.length && !opts.anyway) {
+    console.error("✗ not saved yet:");
+    for (const p of gate.problems) console.error(`  · ${p}`);
+    console.error(`Fix it and run ${cmd("graft note")} again, or add --anyway if a check is wrong.`);
+    process.exitCode = 1;
+    return;
+  }
   const author = opts.author?.trim() || noteAuthor(repo);
   const date = new Date().toISOString().slice(0, 10);
-  const scope = opts.personal ? "personal" : "repo";
   const earlier: Note[] = [];
   const saved: Note[] = [];
   for (const t of targets) {
     earlier.push(...listNotes(t.dir));
-    saved.push(writeNote(t.dir, { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches }, scope));
+    saved.push(writeNote(t.dir, { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches, replaces }, scope));
   }
   const touches = targets.flatMap((t) => t.touches);
   track(
@@ -1409,6 +1457,8 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
   if (prior) console.log(`· builds on ${prior.author ? `${prior.author}'s` : "a"} learning from ${shortDate(prior.date)}`);
   if (!SECTIONS.some((s) => sectionLead(body, s.heading) !== null))
     console.log("· tip: learnings read best under ## Decided, ## Tried and ruled out and ## Watch out");
+  for (const w of gate.warnings) console.log(`· ${w}`);
+  if (old) console.log(`· takes over from ${noteName(old)}, which stays as the record`);
   const repoSaved = saved.filter((n) => n.scope === "repo");
   if (repoSaved.length) {
     // Who else works on these files, for the case for committing it.
@@ -1417,7 +1467,8 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     if (!process.stdout.isTTY && TRAIL)
       console.log(
         `[trail] Close your reply with one line, word for word. If this learning is committed by the end of your turn: ${lines.committed}\n` +
-          `  If it isn't: ${lines.uncommitted}`,
+          `  If it isn't: ${commitAsk(note.title, about)}\n` +
+          "  On a yes, commit it with the change: in the change's own commit when that isn't pushed yet.",
       );
   } else {
     console.log("· just for you: kept on this machine, out of the repo");
@@ -1428,6 +1479,12 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     maybeSyncInBackground(t.dir);
   }
   printLines(cloudLines(repo, { command: "note" }));
+}
+
+/** What the agent asks after saving a team learning it hasn't committed: who reads it, and when. */
+export function commitAsk(title: string, about?: string): string {
+  const when = about ? `when they open ${basename(about.split("#")[0]!)}` : "on their next session here";
+  return `📝 Learning: "${title.replace(/"/g, "'")}" · your teammates' Claude reads it ${when}. Commit it with this change? (y/n)`;
 }
 
 /** Lines that close a command's output, with a blank line before them. */

@@ -23,28 +23,59 @@ export function skillTemplate(brand: Brand = "graft"): string {
 const TRAIL_DESCRIPTION = `Use for ANY task in this repo. What past sessions worked out, decided and
   ruled out is in .trail/learnings/, so read the learnings on your task before
   exploring. Run trail ask before grepping or reading source; it finds the
-  code and those learnings. When a task took real digging, save a learning
-  with trail note and commit it with the change; do the same when the user
-  corrects how something is done here. Run trail check before you commit,
-  push or open a PR. If the trail command isn't installed, read
-  .trail/learnings/ directly and credit one in a line when it shapes your
-  reply; after that first credit, offer once to set trail up, and only if
-  they say yes, run npm install -g @trailhq/trail-code and then
-  trail init --no-agents.`;
+  code and those learnings. When the session finds what the code can't tell
+  the next person, like a bug's cause after failed attempts, an approach
+  dropped, a choice and why, or the user correcting how something is done
+  here, save a learning with trail note and commit it with the change. Run
+  trail check before you commit, push or open a PR. If the trail command
+  isn't installed, read .trail/learnings/ directly and credit one in a line
+  when it shapes your reply; after that first credit, offer once to set trail
+  up, and only if they say yes, run npm install -g @trailhq/trail-code and
+  then trail init --no-agents.`;
 
 /** The same moments, first in the body, so they're read before the tool docs. */
 const TRAIL_MOMENTS = `## When to reach for trail
 - **Before exploring code**, run \`trail ask "<task>" --source\`. Learnings
   from past sessions, yours and your team's, on what was decided, tried and
   ruled out print above the code. Read them first.
-- **When you finish a task that took real digging**, save a learning for the
-  next session with \`trail note\`, and commit it with the change. How is
-  under Learnings below.
+- **When the session finds what the code can't tell the next person**, save a
+  learning with \`trail note\`, and commit it with the change. What counts is
+  under Saving a learning below.
 - **When the work is ready for review**, run \`trail check\` before you commit
   it, push the branch or open a PR. It checks the changes against what the
   team has learned. How is under Before work goes for review below.
 - **When the user corrects how something is done here**, or states a rule for
   it, save that as a learning too, so nobody has to say it again.
+
+## Saving a learning
+Save one when the session found what the code can't tell the next person:
+- a bug's real cause, after attempts that didn't work;
+- an approach you dropped, and why;
+- a choice between options, and why this one;
+- the user correcting how something is done here.
+
+Save it before you commit or open the PR, so it ships with the change:
+\`trail note --title "<the fact, not the task>"\` with the text on stdin. Name
+the files or functions it's about, and give each decision its reason.
+
+Don't save setting up trail or other tools, what the diff already shows,
+status ("PR is open", "not merged yet"), or facts about one machine (those go
+with \`--personal\`). When it updates an earlier learning, pass
+\`--replaces <file>\`. \`trail note\` turns away a learning that names no code,
+gives no reason, reads as status or repeats one, and says what to fix.
+
+Good, \`--title "CodeQL init and analyze must share a version"\`:
+
+    ## Decided
+    - Pin \`github/codeql-action/init\` and \`/analyze\` to the same version in
+      \`.github/workflows/codeql.yml\`. Mismatched, analyze fails with "Loaded a
+      configuration file for version X, but running version Y".
+    ## Tried and ruled out
+    - Letting Dependabot bump them one at a time: it bumped only analyze and
+      broke main for two weeks.
+
+Bad, \`--title "Finishing the rollout PR"\`: "## Decided - PR #3372 is fixed and
+pushed." Status, no file, no reason, and wrong by next week.
 
 ## If trail isn't installed
 The learnings are plain markdown in \`.trail/learnings/\`, one file per session,
@@ -114,11 +145,10 @@ what trail prints with it, e.g. \`📝 Started from Anirudh's learning ·
 saved ~90k tokens and ~12 min\`, or \`· 3x faster to a PR\` when that's what it
 prints.
 
-When you finish a task that took real digging, save a learning for the next
-session: \`trail note --title "<what it was about>"\` with the text on stdin,
-under \`## Decided\`, \`## Tried and ruled out\` and \`## Watch out\`. A summary,
-never a transcript, and nothing secret. Do the same when the user corrects how
-something is done here, or states a rule for it.
+To save one (when is under Saving a learning above): \`trail note --title
+"<the fact, not the task>"\` with the text on stdin, under \`## Decided\`,
+\`## Tried and ruled out\` and \`## Watch out\`. A summary, never a transcript,
+and nothing secret.
 
 A learning is for the team or just for the user:
 - For the team, the default: anything about the code, the repo, its tools or
@@ -131,13 +161,14 @@ A learning is for the team or just for the user:
 
 \`trail note\` prints the line to close your reply with. For a team learning
 it prints two: one for when the learning is committed by the end of your
-turn, one for when it isn't. Check with \`git status --porcelain
+turn, and one for when it isn't, which asks the user whether to commit it
+with the change. On a yes, commit it. Check with \`git status --porcelain
 .trail/learnings\` before you close, and use the one that's true.
 
 Never edit a learning once it's written, yours or a teammate's: it's the
 record of what that session knew. When a change goes against one on purpose,
 say why in the commit message and save a new learning that says what changed
-and why.
+and why, with \`--replaces <file>\` when it takes over from an earlier one.
 
 ## Before work goes for review
 When the work is ready for review, run \`trail check\` before you commit it,
