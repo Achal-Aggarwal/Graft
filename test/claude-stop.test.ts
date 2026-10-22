@@ -1,8 +1,9 @@
 /**
- * The one Stop handler (src/claude/stop.ts). A turn that took real digging
- * ends with main's ask, once a session (D182), worded so the agent asks the
- * person before saving anything; otherwise Stop writes nothing, while the
- * turn-end bookkeeping (the cost of the turn, the background graph sync) still runs.
+ * The one Stop handler (src/claude/stop.ts). A sign in the transcript (#663:
+ * here a check that failed, then passed after an edit) ends the turn with
+ * #663's ask to save a learning, once per sign; otherwise Stop writes nothing,
+ * while the turn-end bookkeeping (the cost of the turn, the background graph
+ * sync) still runs.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,13 +13,21 @@ import { join } from 'node:path';
 import { BRAND_ENV } from '../src/brand.js';
 import { main } from '../src/claude/hooks.js';
 import { handleStopEvent } from '../src/claude/stop.js';
-import { NOTE_ASK } from '../src/claude/note-ask.js';
 import { emptyStats, readSession, readStats, writeStats } from '../src/claude/state.js';
 import { ensureRepoHome } from '../src/notes/home.js';
 
 const prompt = (text: string) => ({ type: 'user', message: { role: 'user', content: text } });
 const call = (command: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: Math.random().toString(36), name: 'Bash', input: { command } }] } });
 const result = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } });
+let ids = 0;
+/** A Bash call with its own result, so a failed one reads as failed. */
+const bash = (command: string, out = 'ok', error = false) => {
+  const id = `tu${++ids}`;
+  return [
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: out, is_error: error }] } },
+  ];
+};
 const jsonl = (entries: object[]) => entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
 
 /** Everything a call writes to stdout. */
@@ -56,11 +65,16 @@ function trailRepo(): { dir: string; transcript: string } {
   return { dir, transcript };
 }
 
-test('a turn of real digging ends with the ask to save a learning, once a session (D182)', async () => {
-  const { transcript } = trailRepo();
+test("a turn of digging asks nothing; a check that failed, then passed after an edit, gets #663's ask, once per sign", async () => {
+  const { dir, transcript } = trailRepo();
+  assert.equal(await stop(JSON.stringify({ session_id: 's0', transcript_path: transcript })), '', 'tool calls alone are no sign');
+  const fixed = join(dir, 'fixed.jsonl');
+  writeFileSync(fixed, jsonl([prompt('fix the retry'), ...bash('go test ./...', 'FAIL', true), { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: join(dir, 'client.go'), old_string: 'a', new_string: 'b' } }] } }, ...bash('go test ./...', 'ok')]));
   for (const session of ['s1', 's2']) {
-    assert.deepEqual(JSON.parse(await stop(JSON.stringify({ session_id: session, transcript_path: transcript }))), { decision: 'block', reason: NOTE_ASK }, `the ask in ${session}`);
-    assert.equal(await stop(JSON.stringify({ session_id: session, transcript_path: transcript })), '', `once in ${session}`);
+    const out = JSON.parse(await stop(JSON.stringify({ session_id: session, transcript_path: fixed })));
+    assert.equal(out.decision, 'block', `the ask in ${session}`);
+    assert.match(out.reason, /^\[trail\] go test failed once, then passed after your change to client\.go\./);
+    assert.equal(await stop(JSON.stringify({ session_id: session, transcript_path: fixed })), '', `once in ${session}`);
   }
 });
 

@@ -19,10 +19,10 @@
  * two restarts on one morning are two sessions on one day.
  */
 import { spawnSync } from "node:child_process";
-import { closeSync, lstatSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { checkoutRoot, repoPlace } from "../notes/home.js";
+import { checkoutRoot, remoteKey, repoPlace } from "../notes/home.js";
 import { claudeProjectDir } from "../notes/session-cost.js";
 import { openPlain } from "./plain-file.js";
 import { dayOf, firstCwd, scanTranscript, sessionOf, type PastSession, type SessionSource } from "./transcript.js";
@@ -72,6 +72,41 @@ export function repoRoots(repo: string): string[] {
   if (common && basename(common) === ".git") roots.add(dirname(common));
   for (const line of git(repo, ["worktree", "list", "--porcelain"]).split("\n")) {
     if (line.startsWith("worktree ")) roots.add(line.slice("worktree ".length));
+  }
+  return [...roots];
+}
+
+/**
+ * {@link repoRoots}, plus every other checkout on this machine whose remote is
+ * the same repo: a fresh clone at `~/trail-demo/me` of github.com/acme/api
+ * finds the sessions and Claude memory of `~/src/api`. Claude Code keeps each
+ * project's folder under ~/.claude/projects; each folder's first transcript
+ * says where it ran, and that folder's git config names its remote (#662).
+ */
+export function sameRepoRoots(repo: string, home: string = homedir()): string[] {
+  const roots = new Set(repoRoots(repo));
+  const mine = remoteKey(repo)?.key;
+  if (!mine) return [...roots];
+  const projects = join(home, ".claude", "projects");
+  let dirs: string[];
+  try {
+    dirs = readdirSync(projects);
+  } catch {
+    return [...roots];
+  }
+  const seen = new Set<string>();
+  for (const d of dirs) {
+    let first: string | undefined;
+    try {
+      first = readdirSync(join(projects, d)).find((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    const cwd = first ? firstCwd(join(projects, d, first)) : null;
+    if (!cwd || seen.has(cwd)) continue;
+    seen.add(cwd);
+    const found = existsSync(cwd) ? remoteKey(cwd) : null;
+    if (found?.key === mine) roots.add(found.checkout);
   }
   return [...roots];
 }

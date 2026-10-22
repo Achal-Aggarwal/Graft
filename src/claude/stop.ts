@@ -6,12 +6,12 @@
  * left the graph dirty. Then the answer, one JSON object at most: the
  * learned-skills part's (stop-skills.ts, loaded only when skills are on), a
  * block (the repeated-job offer the agent says) or a notice, never both. When
- * that part has nothing to say, under trail a turn of real digging that left
- * no learning is asked, once a session, to offer the person one
- * (note-ask.ts, main's ask: the agent saves only on the person's yes); an
- * offer that wins leaves the ask for a later Stop.
+ * that part has nothing to say, under trail a sign in the transcript that the
+ * session found something the code won't tell the next person asks the agent
+ * to save a learning (note-signals.ts). An offer or notice that wins leaves
+ * the sign unasked, so the ask can come at a later Stop.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -23,7 +23,9 @@ import { catchUpTranscript, hasSavingsTally, type TranscriptCatchUp } from './ta
 import { detectHost } from '../trace/host.js';
 import { hookCursorPath } from '../trace/state.js';
 import { trailHome } from '../notes/trail-home.js';
-import { askForNote, foldNoteLine, noteTurnAt, type NoteTurn } from './note-ask.js';
+import { keepsNotes } from '../notes/home.js';
+import { brand } from '../brand.js';
+import { NOTE_ASKS_PER_SESSION, noteAsk, noteSignals } from './note-signals.js';
 import type { HookOut } from '../skills/types.js';
 
 /** The fields of a Stop payload this handler reads. */
@@ -50,8 +52,7 @@ function readTurnEnd(input: StopInput, s: SessionState): TranscriptCatchUp | nul
   const path = input.transcript_path;
   if (typeof path !== 'string' || !path) return null;
   // Billed up to this reply already, whatever the cursor says.
-  // The learning ask's turn is folded from the same read (note-ask.ts).
-  return catchUpTranscript(path, hookCursorPath(sessionId(input)), { billedThrough: s.lastBillingUuid, also: foldNoteLine });
+  return catchUpTranscript(path, hookCursorPath(sessionId(input)), { billedThrough: s.lastBillingUuid });
 }
 
 /**
@@ -108,10 +109,10 @@ function countTallyTurn(s: SessionState, read: TranscriptCatchUp | null, lastMes
 
 /**
  * The turn's cost and tally, from one read of the transcript and one write of
- * the session. Returns the turn as the learning ask sees it after that read,
- * or null when there was no Claude Code transcript to read.
+ * the session. Returns the transcript's path when it is Claude Code's, for the
+ * learning ask, or null when there was none to read.
  */
-function turnEnd(input: StopInput, dir: string): NoteTurn | null {
+function turnEnd(input: StopInput, dir: string): string | null {
   try {
     const id = sessionId(input);
     const s = readSession(dir, id);
@@ -119,10 +120,37 @@ function turnEnd(input: StopInput, dir: string): NoteTurn | null {
     const billed = sampleTurnCost(s, read);
     const counted = countTallyTurn(s, read, input.last_assistant_message);
     if (billed || counted) writeSession(dir, id, s);
-    return read && typeof input.transcript_path === 'string' ? noteTurnAt(hookCursorPath(id), input.transcript_path) : null;
+    return read && typeof input.transcript_path === 'string' ? input.transcript_path : null;
   } catch {
     // A turn-end metric is never worth failing the graph sync over.
     return null;
+  }
+}
+
+/**
+ * #663's save ask: under trail, a sign in the transcript that the session
+ * found something the code won't tell the next person (a check that failed
+ * then passed after an edit, a correction, an undone edit, a picked option, a
+ * commit; see note-signals.ts) asks the agent to save a learning, by blocking
+ * the stop with the reason. Each sign is asked about once, and a session is
+ * asked at most NOTE_ASKS_PER_SESSION times; a saved learning starts the signs
+ * over. Never blocks twice in a row: Claude Code sets `stop_hook_active` on
+ * the stop that follows a block. The caller writes it only as the Stop's one
+ * answer, so a sign is marked asked only when it was. Never throws.
+ */
+export function askForNote(input: { stop_hook_active?: unknown }, dir: string, id: string, transcript: string | null): HookOut {
+  try {
+    if (!transcript || brand() !== 'trail' || input.stop_hook_active || !keepsNotes(dir)) return {};
+    const s = readSession(dir, id);
+    const asked = s.noteAsks ?? [];
+    if (asked.length >= NOTE_ASKS_PER_SESSION) return {};
+    const sign = noteSignals(readFileSync(transcript, 'utf8'), dir).find((x) => !asked.includes(x.key));
+    if (!sign) return {};
+    writeSession(dir, id, { ...s, noteAsks: [...asked, sign.key] });
+    return { block: noteAsk(sign) };
+  } catch {
+    // A missed reminder costs one learning; a broken Stop hook costs the session.
+    return {};
   }
 }
 
@@ -153,7 +181,7 @@ function startSync(dir: string): void {
  */
 export async function handleStopEvent(input: unknown, dir: string, opts: { skills?: boolean } = {}): Promise<void> {
   const i: StopInput = input && typeof input === 'object' && !Array.isArray(input) ? (input as StopInput) : {};
-  const turn = turnEnd(i, dir);
+  const transcript = turnEnd(i, dir);
   startSync(dir);
   if (opts.skills === false) return;
   let out: HookOut = {};
@@ -162,8 +190,8 @@ export async function handleStopEvent(input: unknown, dir: string, opts: { skill
   } catch {
     // A turn always ends; an offer can wait for the next one.
   }
-  // The skills part's answer wins; with none, the learning ask may be the answer.
-  if (!out.block && !out.notice && !out.context) out = askForNote(i as { stop_hook_active?: unknown }, dir, sessionId(i), turn);
+  // The skills part's answer wins; with none, #663's save ask may be the answer.
+  if (!out.block && !out.notice && !out.context) out = askForNote(i as { stop_hook_active?: unknown }, dir, sessionId(i), transcript);
   try {
     out = await forgetNotice(i, out);
   } catch {

@@ -125,7 +125,7 @@ function onPath() {
 function globalRoot() {
   try {
     const { execFileSync } = require('child_process');
-    const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' }).trim();
+    const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32', windowsHide: true }).trim();
     return root || null;
   } catch { return null; /* npm unavailable */ }
 }
@@ -243,7 +243,9 @@ function liveFiles(learnings, files) {
     };
     const id = /^l-[0-9a-f]{6,16}$/.test(get('id')) ? get('id') : 'l-' + crypto.createHash('sha1').update(f).digest('hex').slice(0, 6);
     const status = ['held', 'replaced', 'retired'].includes(get('status')) ? get('status') : 'active';
-    return { f, id, date: get('date'), status, replaces: get('replaces') };
+    // A file with no date: is dated by its name, as trail names them (2026-10-17-...).
+    const date = get('date') || (/^\\d{4}-\\d{2}-\\d{2}/.exec(f) || [''])[0];
+    return { f, id, date, status, replaces: get('replaces') };
   });
   const byId = new Map();
   for (const n of all) byId.set(n.id, [...(byId.get(n.id) || []), n]);

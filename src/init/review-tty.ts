@@ -100,7 +100,7 @@ function press(st: State, key: Key, repoKey: string, env: NodeJS.ProcessEnv): Sc
       }
       return null;
     case 'w':
-      if (!item || item.kind === 'review') return null;
+      if (!item || item.kind === 'review' || item.kind === 'claude') return null;
       if (item.kind === 'guardrail' && item.guardrail?.check === 'no-timeout') {
         st.note = INIT_COPY.wNoTimeout!;
         return null;

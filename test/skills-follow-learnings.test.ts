@@ -7,7 +7,9 @@
 process.env.TZ = "UTC";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileRun, type CompileOpts } from "../src/skills/compile.js";
 import { skillSha } from "../src/skills/offer-moment.js";
@@ -220,4 +222,27 @@ test("onlyRepeats: what init folds into a kept skill as a lesson", () => {
   assert.equal(onlyRepeats("run scripts/gen_schema.py, then tell me what changed", steps), false, "part of it isn't a step");
   assert.equal(onlyRepeats("use pnpm, not npm", ["npm test"]), false, "a contradiction is no repeat");
   assert.equal(onlyRepeats("explain it simply", steps), false);
+});
+
+test("a learning saved by trail note, through #663's gate, is one part 7 reads: same store, live, and its steps follow it", () => {
+  const repo = mkdtempSync(join(tmpdir(), "follow-663-"));
+  const home = mkdtempSync(join(tmpdir(), "follow-663-home-"));
+  homes.push(repo, home);
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  spawnSync("git", ["config", "user.name", "Priya S"], { cwd: repo });
+  writeFileSync(join(repo, "package.json"), '{ "scripts": { "test": "vitest" } }\n');
+  spawnSync("git", ["add", "package.json"], { cwd: repo });
+  spawnSync("git", ["-c", "user.email=p@example.com", "commit", "-qm", "init"], { cwd: repo });
+  const body = "## Decided\n- Use pnpm, not npm.\n- Because npm rewrites the pnpm-lock.yaml that package.json is installed from.\n";
+  const r = spawnSync(process.execPath, ["--import", "tsx", join(process.cwd(), "src", "bin", "trail.ts"), "note", repo, "--title", "Use pnpm, not npm", "--touches", "package.json"], {
+    input: body,
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, USERPROFILE: home, TRAIL_HOME: join(home, ".trail"), DO_NOT_TRACK: "1", CLAUDECODE: undefined, TRAIL_INVOKED_AS: undefined },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const ls = stepLearnings({ repoKeys: [], checkout: repo, env: { ...process.env, TRAIL_HOME: join(home, ".trail") } });
+  assert.deepEqual(ls.map((l) => l.quote), ["Use pnpm, not npm"]);
+  const c = compiled(testsSheet(), ls);
+  assert.deepEqual(c.steps.map((st) => st.cmd), ["pnpm install --frozen-lockfile", "pnpm run build", "pnpm test"]);
+  assert.match(c.followed ?? "", /this repo's learning "Use pnpm, not npm"/);
 });

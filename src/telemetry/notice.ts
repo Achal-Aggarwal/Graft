@@ -14,7 +14,7 @@
  * who see it — this catches everyone else.
  */
 import { patchState, readState } from './identity.js';
-import { explainOff, offReason } from './gate.js';
+import { doNotTrack, explainOff, offReason } from './gate.js';
 import { peek } from './queue.js';
 import { buildBatch } from './send.js';
 import { posthogHost } from './key.js';
@@ -54,6 +54,7 @@ export function formatStatus(home?: string, env?: NodeJS.ProcessEnv): string {
       : `telemetry: ${explainOff(reason)}`,
     `  contract:  ${TELEMETRY_DOC_URL}`,
   ];
+  if (doNotTrack(env)) lines.push('  update check: off — DO_NOT_TRACK is set');
   if (reason === null || reason === 'disabled') {
     lines.push(`  endpoint:  ${posthogHost()}`);
     lines.push(`  queued:    ${pending} event${pending === 1 ? '' : 's'} waiting for the next daily flush`);

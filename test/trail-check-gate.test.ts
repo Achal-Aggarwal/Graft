@@ -200,7 +200,7 @@ test("a replacement saved on the branch doesn't silence the learning on main: th
   // The agent, told to fix the conflict, saves a learning that replaces Maya's, on this branch only.
   const saved = trail(["note", repo, "--title", "Retry count raised to 6", "--touches", "client.go", "--replaces", learningId(KEEP4_NAME)], home, RAISE6);
   assert.equal(saved.status, 0, saved.err);
-  const newId = /^· id (l-[0-9a-f]+) /m.exec(saved.out)?.[1];
+  const newId = /^· id (l-[0-9a-f]+)$/m.exec(saved.out)?.[1];
   assert.ok(newId, saved.out);
 
   const r = trail(["check", repo, "--base", "main", "--json"], home);

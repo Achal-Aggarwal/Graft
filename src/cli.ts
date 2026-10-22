@@ -66,13 +66,14 @@ import { recordInit, snapInit } from "./init/install-paths.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
 import { listSkills } from "./skills/skills.js";
 import { registerSkillCommands } from "./skills/cli-skills.js";
+import { gateNote, namesRepoSymbol, symbolCandidates, trackedFiles } from "./notes/note-gate.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
 import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, serverUrl, writeCloud, type Cloud } from "./cloud/workspace.js";
 import { inWorkspace, maybeSyncInBackground, recordActivity, runSyncChild, syncRepo, workspaceLearnings } from "./cloud/workspace-sync.js";
 import type { CheckResult } from "./check/types.js";
 import { checkLocally } from "./check/local-check.js";
-import { liveLearnings } from "./notes/learning-fields.js";
-import { learningToReplace, savedIdLine } from "./notes/replace.js";
+import { findLearning, liveLearnings } from "./notes/learning-fields.js";
+import { savedIdLine } from "./notes/replace.js";
 import { formatOverlap, maybeRefreshBranches, overlapsWith, pushedWhen, readBranchCache, refreshBranches } from "./notes/branches.js";
 import { ensureRepoTrail, LEARNINGS_DIR } from "./notes/repo-trail.js";
 import type { AskResult } from "./ask/ask.js";
@@ -437,6 +438,11 @@ grouped(program.command("build"), GROUP.setup)
   .option("--deep", "run the LLM pass: concept nodes (graft/*.md) + per-symbol summary/crux")
   .option("-e, --extensions <exts...>", 'code extensions to include (e.g. ".ts" ".py"); an extension with no parser is ignored with a warning that lists the supported set')
   .option("-j, --concurrency <n>", "files summarized in parallel during --deep (default 5)")
+  .option(
+    "--synth-concurrency <n>",
+    "concept synthesis batches in flight at once during --deep (default 4). Separate from -j: " +
+      "each synthesis call carries a whole batch of summaries, not one file",
+  )
   .option("--no-reuse", "re-parse every file instead of replaying unchanged ones from the extraction cache")
   .option("--lsp", "add compiler-grade call edges via a language server if one is installed (opt-in, slower; e.g. rust-analyzer, clangd)")
   .option("--allow-partial", "with --deep: exit 0 even when some files' summaries failed (default: a degraded meaning tier exits 1)")
@@ -485,6 +491,7 @@ grouped(program.command("build"), GROUP.setup)
       reuse?: boolean;
       lsp?: boolean;
       allowPartial?: boolean;
+      synthConcurrency?: string;
       includeDir?: string[];
       onlyDir?: string[];
       followSubmodules?: boolean;
@@ -507,6 +514,11 @@ grouped(program.command("build"), GROUP.setup)
     const concurrency = opts.concurrency ? Math.max(1, Number(opts.concurrency)) : undefined;
     if (opts.concurrency && !Number.isFinite(concurrency)) {
       console.error(`✗ --concurrency must be a number, got "${opts.concurrency}"`);
+      process.exit(1);
+    }
+    const synthConcurrency = opts.synthConcurrency ? Math.max(1, Number(opts.synthConcurrency)) : undefined;
+    if (opts.synthConcurrency && !Number.isFinite(synthConcurrency)) {
+      console.error(`✗ --synth-concurrency must be a number, got "${opts.synthConcurrency}"`);
       process.exit(1);
     }
     warnUnsupportedExtensions(opts.extensions);
@@ -592,6 +604,7 @@ grouped(program.command("build"), GROUP.setup)
         deep: !!deep,
         extensions: opts.extensions,
         concurrency,
+        synthConcurrency,
         childConfig: cliConfig(),
         override: buildGlobalDir,
         includeDirs: opts.includeDir,
@@ -609,6 +622,7 @@ grouped(program.command("build"), GROUP.setup)
       const c = await engine.init(dir, {
         extensions: opts.extensions,
         onlyDirs,
+        synthConcurrency,
         onProgress: ({ phase, index, total, file }) =>
           process.stderr.write(
             `\r${phase === "summarize" ? "reading" : "writing"} concepts ${index + 1}/${total}: ${file.slice(0, 40).padEnd(40)}`,
@@ -619,9 +633,9 @@ grouped(program.command("build"), GROUP.setup)
         throw err;
       });
       process.stderr.write("\n");
-      console.log(
-        `✓ concepts: ${c.nodes} nodes, ${c.links} links from ${c.files} files (${c.summarized} read, ${c.cached} cached)`,
-      );
+      const conceptLine = `concepts: ${c.nodes} nodes, ${c.links} links from ${c.files} files (${c.summarized} read, ${c.cached} cached)`;
+      if (c.nodes === 0) console.error(`⚠ ${conceptLine}`);
+      else console.log(`✓ ${conceptLine}`);
       for (const e of c.errors) console.error(`✗ ${e}`);
       conceptErrors = c.errors;
       conceptFatal = c.fatal;
@@ -1122,7 +1136,8 @@ grouped(program.command("note", { hidden: !TRAIL }), GROUP.memory)
   .option("--author <name>", "who wrote it (default: the first word of git config user.name)")
   .option("--minutes <n>", "what it took to work out, when the agent's transcript can't say")
   .option("--tokens <n>", "the same, in tokens")
-  .option("--replaces <id>", "the id of an older learning this one replaces (its file name works too): the newest wins, and the old one stops coming up")
+  .option("--replaces <file>", "an earlier learning this one takes over from (its file name in .trail/learnings/); the old file stays")
+  .option("--anyway", "save it even if trail's checks (names code, says why, not status, not a repeat) turn it away")
   .option("--json", "print the saved learning as JSON")
   .argument("[dir]", "repository root", ".")
   .action(async (dir: string, opts: NoteOptions) => {
@@ -1191,6 +1206,7 @@ interface NoteOptions {
   json?: boolean;
   personal?: boolean;
   replaces?: string;
+  anyway?: boolean;
 }
 
 async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
@@ -1231,25 +1247,57 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
         // Then the files the note names, then the ones the session only read.
         touches: [...new Set([...t.touches, ...mentionedFiles(t.dir, body), ...(t.read ?? [])])].slice(0, 10),
       }));
-  const author = opts.author?.trim() || noteAuthor(repo);
-  const date = new Date().toISOString().slice(0, 10);
+  // A touch is a file git tracks or one this session edited: never a file
+  // that was just lying around (a token, a scratch file).
+  const real = (dir: string, files: string[]): string[] => {
+    const tracked = trackedFiles(dir, files.map((f) => f.split("#")[0]!));
+    const edited = new Set((spent?.edited ?? []).map((f) => relative(dir, f).split("\\").join("/")));
+    return files.filter((f) => tracked.has(f.split("#")[0]!) || edited.has(f.split("#")[0]!));
+  };
+  for (const t of targets) t.touches = real(t.dir, t.touches);
   const scope = opts.personal ? "personal" : "repo";
-  const earlier = targets.flatMap((t) => listNotes(t.dir));
-  let replaced: Note | undefined;
-  if (opts.replaces !== undefined) {
-    const found = learningToReplace(earlier, opts.replaces, scope === "personal");
-    if ("error" in found) {
-      for (const l of found.error) console.error(l);
+  const primary = targets[0]!;
+  const existing = listNotes(primary.dir, { branches: false });
+  let old: Note | undefined;
+  if (opts.replaces) {
+    const want = basename(opts.replaces.trim());
+    old = findLearning(existing, want);
+    if (!old) {
+      console.error(`✗ --replaces: no learning named ${want} here. The names are the files in .trail/learnings/.`);
       process.exitCode = 1;
       return;
     }
-    replaced = found.note;
   }
+  // What `replaces:` holds is the old learning's id (learning-fields.ts), not its file name.
+  const replaces = old?.id;
+  const text = `${opts.title}\n${body}`;
+  const gate = gateNote(
+    {
+      title: opts.title,
+      body,
+      personal: scope === "personal",
+      files: real(primary.dir, [...new Set([...mentionedFiles(primary.dir, text), ...(opts.touches ? primary.touches : [])])]),
+      namesSymbol: namesRepoSymbol(primary.dir, symbolCandidates(text)),
+      touches: primary.touches,
+      replaces,
+    },
+    liveLearnings(existing).filter((n) => (n.scope ?? "repo") === scope),
+  );
+  if (gate.problems.length && !opts.anyway) {
+    console.error("✗ not saved yet:");
+    for (const p of gate.problems) console.error(`  · ${p}`);
+    console.error(`Fix it and run ${cmd("graft note")} again, or add --anyway if a check is wrong.`);
+    process.exitCode = 1;
+    return;
+  }
+  const author = opts.author?.trim() || noteAuthor(repo);
+  const date = new Date().toISOString().slice(0, 10);
+  // Saved by `trail note`, which is how an agent saves: src says so, and no flag changes it.
+  const earlier: Note[] = [];
   const saved: Note[] = [];
   for (const t of targets) {
-    // Saved by `trail note`, which is how an agent saves: src says so, and no flag changes it.
-    const input = { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches, replaces: replaced?.id, src: "agent" as const };
-    saved.push(writeNote(t.dir, input, scope));
+    earlier.push(...listNotes(t.dir));
+    saved.push(writeNote(t.dir, { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches, replaces, src: "agent" }, scope));
   }
   const touches = targets.flatMap((t) => t.touches);
   track(
@@ -1263,7 +1311,7 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     return;
   }
   for (const n of saved) console.log(`✓ ${n.scope === "personal" ? "saved just for you" : "added to this repo"} · ${notePlace(n)}`);
-  console.log(savedIdLine(saved, replaced));
+  console.log(savedIdLine(saved));
   const note = saved[0]!;
   // Name a code file if the note touches one; docs are rarely what it's about.
   const about = touches.find((t) => !/\.(md|mdx|txt)$/i.test(t.split("#")[0]!)) ?? touches[0];
@@ -1277,10 +1325,12 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
   }
   // Learnings about the same files, from someone else: this one builds on theirs.
   const files = new Set(touches.map((t) => t.split("#")[0]));
-  const prior = liveLearnings(earlier).find((n) => n !== replaced && n.author !== note.author && n.touches.some((t) => files.has(t.split("#")[0])));
+  const prior = liveLearnings(earlier).find((n) => n !== old && n.author !== note.author && n.touches.some((t) => files.has(t.split("#")[0])));
   if (prior) console.log(`· builds on ${prior.author ? `${prior.author}'s` : "a"} learning from ${shortDate(prior.date)}`);
   if (!SECTIONS.some((s) => sectionLead(body, s.heading) !== null))
     console.log("· tip: learnings read best under ## Decided, ## Tried and ruled out and ## Watch out");
+  for (const w of gate.warnings) console.log(`· ${w}`);
+  if (old) console.log(`· takes over from ${noteName(old)}, which stays as the record`);
   const repoSaved = saved.filter((n) => n.scope === "repo");
   if (repoSaved.length) {
     // Who else works on these files, for the case for committing it.
@@ -1289,7 +1339,8 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     if (!process.stdout.isTTY && TRAIL)
       console.log(
         `[trail] Close your reply with one line, word for word. If this learning is committed by the end of your turn: ${lines.committed}\n` +
-          `  If it isn't: ${lines.uncommitted}`,
+          `  If it isn't: ${commitAsk(note.title, about)}\n` +
+          "  On a yes, commit it with the change: in the change's own commit when that isn't pushed yet.",
       );
   } else {
     console.log("· just for you: kept on this machine, out of the repo");
@@ -1300,6 +1351,12 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     maybeSyncInBackground(t.dir);
   }
   printLines(cloudLines(repo, { command: "note" }));
+}
+
+/** What the agent asks after saving a team learning it hasn't committed: who reads it, and when. */
+export function commitAsk(title: string, about?: string): string {
+  const when = about ? `when they open ${basename(about.split("#")[0]!)}` : "on their next session here";
+  return `📝 Learning: "${title.replace(/"/g, "'")}" · your teammates' Claude reads it ${when}. Commit it with this change? (y/n)`;
 }
 
 /** Lines that close a command's output, with a blank line before them. */
@@ -1484,12 +1541,29 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
       }
     }
 
-    // Under trail: what the look-back found, what the person kept, where this
-    // repo's learnings are, and how many there already are.
+    // Under trail: what the look-back found, and #662's team rows (what
+    // reviewers kept flagging on merged PRs, and Claude Code's notes about the
+    // repo on this machine), what the person kept, where this repo's learnings
+    // are, and how many there already are.
     let learnedNow = false;
+    let teamSaved = 0;
     if (lookBack) {
       const learned = await finishLookBack(repo, lookBack.reads, { yes: opts.yes === true, verbose: opts.verbose === true, say: (l) => console.error(l), ...(tty ? { io: { stdin: process.stdin, stdout: process.stderr } } : {}) });
+      // #662's lines for the team rows it kept with no screen, in its words.
+      const { fromReviews, fromMemory } = learned.teamKept ?? { fromReviews: null, fromMemory: null };
+      if (fromReviews?.saved.length) {
+        const n = fromReviews.saved.length;
+        const what = n < fromReviews.offered ? `kept ${n} of the ${fromReviews.offered} things` : `learned ${n} thing${n === 1 ? "" : "s"}`;
+        console.error(`✓ ${what} reviewers made authors change, from the last ${fromReviews.result.prs} merged PRs here`);
+        // saveReviewFindings keeps the findings' order.
+        fromReviews.saved.forEach((note, i) => console.error(`    for your team · from review on ${(fromReviews.kept[i]?.prs ?? []).map((n) => `#${n}`).join(", ")}: ${note.title}`));
+      }
+      if (fromMemory?.saved.length) {
+        console.error(`✓ kept ${fromMemory.saved.length} of the ${fromMemory.offered} notes your Claude keeps about this repo`);
+        for (const note of fromMemory.saved) console.error(`    ${note.scope === "personal" ? "just for you " : "for your team"} · ${note.title}`);
+      }
       learnedNow = learned.kept > 0;
+      teamSaved = learned.team;
       if (learnedNow) {
         console.error("· Claude follows them from your next session");
         if (learned.inRepo) console.error(commitLines({}, teammatesOn(repo), "repo").uncommitted);
@@ -1499,7 +1573,7 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
       const home = notesHome.get(repo);
       if (home) {
         const learnings = liveLearnings(listNotes(repo, { branches: false })).filter((n) => n.scope === "repo");
-        if (learnings.length === 0) console.error(`✓ learnings  ${LEARNINGS_DIR}/ · ask Claude to save a learning and it's added to this repo`);
+        if (learnings.length === 0) console.error(`✓ learnings  ${LEARNINGS_DIR}/ · a session that fixes a bug, takes a correction or opens a PR leaves one there, for your whole team`);
         else console.error(`✓ learnings  ${learnings.length} in ${LEARNINGS_DIR}/, from ${new Set(learnings.map((n) => n.author || "someone")).size} ${new Set(learnings.map((n) => n.author)).size === 1 ? "person" : "people"}`);
       }
     }
@@ -1549,6 +1623,12 @@ async function runInitCommand(dir: string, opts: InitOptions): Promise<{ ids: st
           edges: graphs.reduce((n, g) => n + g.meta.edgeCount, 0),
         }),
     );
+    // Run by an agent, not a person: the last line tells it to ask about the
+    // commit, since the person never saw the picker and Claude Code folds the rest.
+    if (teamSaved && !process.stderr.isTTY)
+      console.error(
+        `→ ${teamSaved} team learning${teamSaved === 1 ? "" : "s"} in ${LEARNINGS_DIR}/ ${teamSaved === 1 ? "isn't" : "aren't"} committed yet. Ask the user: "Commit ${teamSaved === 1 ? "it" : `the ${teamSaved}`} so your teammates' Claude starts from ${teamSaved === 1 ? "it" : "them"}? (yes / no)"`,
+      );
     // Sorted so `claude,cursor` and `cursor,claude` aggregate as one value.
     track(
       "init_completed",

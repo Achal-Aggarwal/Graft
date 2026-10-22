@@ -54,7 +54,7 @@ test('a repo with learnings and no graft/INDEX.md still gets its standing learni
   assert.match(text, /Standing learnings/);
   assert.match(text, /Use pnpm, never npm, in this repo/);
   assert.match(text, /This repo has 1 learning from past sessions/);
-  assert.match(text, /Save a learning only when the user asks you to/);
+  assert.match(text, /Save a learning when the session finds what the code can't tell the next person/);
   assert.doesNotMatch(text, /repo map \(graft\/INDEX\.md\)/, 'no map to show');
 });
 
