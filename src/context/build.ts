@@ -47,7 +47,7 @@ export const CODE_EXTENSIONS = [
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
   ".py", ".go", ".rs", ".java", ".kt", ".scala",
   ".rb", ".php", ".c", ".h", ".cpp", ".hpp", ".cc",
-  ".cs", ".swift", ".sql", ".sh", ".proto",
+  ".cs", ".swift", ".gleam", ".sql", ".sh", ".proto",
 ];
 
 /**

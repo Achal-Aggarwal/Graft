@@ -146,7 +146,7 @@ Without a map, your coding agent starts every task blind. It greps a term, opens
 
 The graft map builds that understanding once, and keeps it current:
 
-- **Every file, function and caller.** Parsed with tree-sitter into a graph of symbols and who calls what. Deterministic, no model, no network, 23 languages.
+- **Every file, function and caller.** Parsed with tree-sitter into a graph of symbols and who calls what. Deterministic, no model, no network, 24 languages.
 - **The right code with every prompt.** In Claude Code, hooks add the matching files and functions to each prompt, and show what depends on a file right after your agent edits it (the "blast radius"). Cursor, Codex and other agents get the same map through MCP tools and their instruction files.
 - **Always fresh.** Every query checks the working tree first (a few tens of milliseconds when nothing moved) and rebuilds only what changed, so answers describe the code as it is right now, uncommitted edits included.
 - **Plain files you can read.** Linked markdown nodes your agent opens and greps like any other file. No embeddings, no index to keep warm.
@@ -489,7 +489,7 @@ compiler-grade layer, all `$0` and deterministic (no model, no key):
 - **Broad**: symbols (functions, classes, methods, types, …) plus name-resolved
   call edges via a generic tree-sitter extractor, one grammar per language:
   **Rust, C, C++, C#, Ruby, Scala, Elixir, Solidity,
-  Dart, Clojure, Nix, Lua**, and **OCaml, Zig** (symbols only for now, no call edges).
+  Dart, Clojure, Nix, Lua, Gleam**, and **OCaml, Zig** (symbols only for now, no call edges).
 
 - **Compiler-grade edges (opt-in)**: `trail build --lsp` adds precise
   `lsp_resolved` call edges (member calls the static pass can't type) when a
@@ -498,7 +498,7 @@ compiler-grade layer, all `$0` and deterministic (no model, no key):
   **gopls** (Go), **pyright** (Python), **typescript-language-server** (TS/JS).
   It's best-effort: with no server installed the graph is unchanged.
 
-Twenty-three languages, plus Vue single-file components. A file whose language isn't listed is skipped, not
+Twenty-four languages, plus Vue single-file components. A file whose language isn't listed is skipped, not
 indexed. Adding a broad-tier language is a small contribution; see
 [CREDITS.md](CREDITS.md) for the folks who added the current set.
 
