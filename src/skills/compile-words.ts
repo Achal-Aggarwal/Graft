@@ -351,6 +351,8 @@ export function draftText(c: CompiledSkill, sheet: RunSheet): string {
   // D58 b: what ran elsewhere, so the person sees it before saying yes.
   for (const e of away.slice(0, 6)) out.push(`  elsewhere  ${e.cmd} (${e.where})`);
   if (away.length > 6) out.push(`  elsewhere  and ${away.length - 6} more`);
+  // Part 7: steps that follow the person's learnings rather than the run.
+  if (c.followed) out.push(`  learnings  ${flatLine(c.followed, 400)}`);
   out.push(`  just for you, ${c.meta.applies === 'every repo' ? 'in every repo' : 'in this repo'} · nothing is shared or uploaded`);
   return out.join('\n');
 }

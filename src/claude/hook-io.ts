@@ -35,7 +35,7 @@ export function graftJson(dir: string, args: string[], timeout: number = CHILD_T
     // out to the real CLI (which isn't built relative to the TS source under test).
     const cliPath = process.env.GRAFT_TEST_CLI ?? graftCliPath();
     const out = execFileSync(process.execPath, [cliPath, ...args],
-      { cwd: dir, encoding: 'utf8', timeout, input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
+      { cwd: dir, encoding: 'utf8', timeout, input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], windowsHide: true });
     return JSON.parse(out);
   } catch (e: any) {
     // `graft check` exits non-zero when the graph is stale (by design) but still

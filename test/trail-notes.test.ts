@@ -288,7 +288,7 @@ test("trail init makes the repo's .trail/learnings/ and says to commit it; graft
   const t = run("trail", ["init", d, "--agents", "claude", "--yes", "--no-global"], home);
   assert.equal(t.status, 0, t.err);
   assert.match(t.err, /✓ learnings {2}\.trail\/learnings\/ · a session that fixes a bug, takes a correction or opens a PR leaves one there, for your whole team/);
-  assert.match(t.err, /· commit \.claude\/settings\.json and \.trail\/ once — after that, teammates' Claude reads your learnings even before they install trail/);
+  assert.match(t.err, /· commit \.claude\/settings\.json and \.trail\/ once: after that, teammates' Claude reads your learnings even before they install trail/);
   assert.ok(existsSync(join(d, ".trail", "learnings")));
   assert.match(readFileSync(join(d, ".trail", "README.md"), "utf8"), /^# \.trail/);
   assert.equal(readFileSync(join(d, "CLAUDE.md"), "utf8"), "# extract\n\nTeam rules.\n", "the team's CLAUDE.md is untouched");
@@ -314,7 +314,7 @@ test("trail note saves a learning in .trail/learnings/ to commit, ask shows it t
 
   const saved = run("trail", ["note", d, "--title", "Bbox coordinates are off on rotated PDFs", "--minutes", "12", "--tokens", "9600"], home, BODY);
   assert.equal(saved.status, 0, saved.err);
-  assert.match(saved.out, /^✓ saved for your team · \.trail\/learnings\/\d{4}-\d{2}-\d{2}-bbox-coordinates-are-off-on-rotated-priya\.md$/m);
+  assert.match(saved.out, /^✓ added to this repo · \.trail\/learnings\/\d{4}-\d{2}-\d{2}-bbox-coordinates-are-off-on-rotated-priya\.md$/m);
   assert.match(saved.out, /· the next session that touches bbox\.go starts from this, and gets to a PR 3x faster/);
   assert.match(
     saved.out,
@@ -339,14 +339,14 @@ test("trail note saves a learning in .trail/learnings/ to commit, ask shows it t
     assert.match(ask.out, /from Priya's learning · \w{3} \d+ · Bbox coordinates are off on rotated PDFs/);
     assert.match(ask.out, /ruled out {3}Rotating the image before OCR/);
     assert.match(ask.out, /\.trail\/learnings\/\d{4}-\d{2}-\d{2}-bbox/);
-    assert.match(ask.out, /\[(trail|graft)\] starting from this learning gets you to a PR 3x faster\./, "what reusing it is worth");
+    assert.doesNotMatch(ask.out, /3x faster|gets you to a PR/, "no worth its own measured cost doesn't back");
   }
   // Not connected to a workspace: what was searched stays unrecorded, so a later sign-in has nothing old to send.
   assert.equal(existsSync(join(home, ".trail", "outbox.jsonl")), false, "no outbox before connecting");
 
   const st = run("trail", ["status", d], home);
   assert.equal(st.status, 0, st.err);
-  assert.match(st.out, /^learnings {3}1 for the team in \.trail\/learnings\/$/m);
+  assert.match(st.out, /^learnings {3}1 added to this repo, in \.trail\/learnings\/$/m);
   assert.equal(JSON.parse(run("trail", ["status", d, "--json"], home).out).learnings.repo, 1);
 
   const un = run("trail", ["uninstall", d, "-y", "--no-global"], home);
@@ -424,7 +424,8 @@ test("the session-start directive mentions learnings only in a repo that keeps t
   assert.doesNotMatch(formatOrientation("# map", 100), /learning/);
   const some = formatOrientation("# map", 100, undefined, 3, true);
   assert.match(some, /This repo has 3 learnings from past sessions/);
-  assert.match(some, /📝 Started from Priya's learning · saved ~90k tokens and ~12 min, or · 3x faster to a PR when that's what it prints/, "the closing line, by example");
+  assert.match(some, /📝 Started from Priya's learning, adding what it saved \(· saved ~90k tokens and ~12 min\) only when (trail|graft) prints that with it/, "the closing line, by example");
+  assert.doesNotMatch(some, /3x faster/, "no value claim by example");
   assert.match(some, /Save a learning when the session finds what the code can't tell the next person/);
   assert.match(some, /never for setting up trail, status, or what the diff shows/);
   assert.match(some, /commit it with the change/);
@@ -507,5 +508,68 @@ test("trail init moves a graft-wired repo to trail's names, and uninstall takes 
     for (const f of ["settings.json", "settings.local.json"]) assert.equal(existsSync(join(d, ".claude", f)), false, f);
   } finally {
     delete process.env.GRAFT_MCP_NPX;
+  }
+});
+
+// After a check conflict the agent says why; it saves a learning about it
+// only when the person asks, like any other learning.
+test("nothing tells the agent to save a learning on its own after a check conflict", async () => {
+  const { skillTemplate } = await import("../src/claude/skill-template.js");
+  const { teamNotesDirective } = await import("../src/claude/format.js");
+  const saved = process.env.TRAIL_INVOKED_AS;
+  process.env.TRAIL_INVOKED_AS = "trail";
+  let directive: string;
+  try {
+    directive = teamNotesDirective(3, true);
+  } finally {
+    if (saved === undefined) delete process.env.TRAIL_INVOKED_AS;
+    else process.env.TRAIL_INVOKED_AS = saved;
+  }
+  // The skill's check-conflict text is #663's (D184): it says to save a new learning with --replaces. The session
+  // directive's trail check line is part 6's, and still waits for the user.
+  void skillTemplate;
+  for (const [where, text] of [["session directive", directive]] as const) {
+    assert.doesNotMatch(text.replace(/\s+/g, " "), /and save a new learning/, where);
+    assert.match(text.replace(/\s+/g, " "), /If the user asks you to save what changed, save it as a new learning/, where);
+  }
+});
+
+test("trail status and trail init count only live learnings: not retired, held or replaced ones", () => {
+  const home = mkdtempSync(join(tmpdir(), "notes-home-"));
+  const d = repoWithCode();
+  const dir = join(d, ".trail", "learnings");
+  mkdirSync(dir, { recursive: true });
+  const file = (name: string, extra = "", date = "2026-10-08") =>
+    writeFileSync(join(dir, name), `---\ntitle: "${name}"\nauthor: Priya\ndate: ${date}\n${extra}---\n\n${BODY}\n`);
+  file("2026-10-08-active-priya.md");
+  file("2026-10-08-retired-priya.md", "status: retired\n");
+  file("2026-10-08-held-priya.md", "status: held\n");
+  file("2026-10-08-old-priya.md", "id: l-0a0a0a0a\n");
+  file("2026-10-09-new-priya.md", "id: l-0b0b0b0b\nreplaces: l-0a0a0a0a\n", "2026-10-09");
+  const st = run("trail", ["status", d], home);
+  assert.equal(st.status, 0, st.err);
+  assert.match(st.out, /^learnings {3}2 /m);
+  assert.equal(JSON.parse(run("trail", ["status", d, "--json"], home).out).learnings.repo, 2);
+  const init = run("trail", ["init", d, "--agents", "claude", "--yes", "--no-global"], home);
+  assert.equal(init.status, 0, init.err);
+  assert.match(init.err, /✓ learnings {2}2 in \.trail\/learnings\//);
+});
+
+test("the session and the skill say a replacement saved on a branch leaves the conflict in place until it's merged", async () => {
+  const { skillTemplate } = await import("../src/claude/skill-template.js");
+  const { teamNotesDirective } = await import("../src/claude/format.js");
+  const saved = process.env.TRAIL_INVOKED_AS;
+  process.env.TRAIL_INVOKED_AS = "trail";
+  let directive: string;
+  try {
+    directive = teamNotesDirective(3, true);
+  } finally {
+    if (saved === undefined) delete process.env.TRAIL_INVOKED_AS;
+    else process.env.TRAIL_INVOKED_AS = saved;
+  }
+  for (const [where, text] of [["skill", skillTemplate("trail")], ["session directive", directive]] as const) {
+    const flat = text.replace(/\s+/g, " ");
+    assert.match(flat, /A replacement saved on this branch leaves the conflict in place until it's merged/, where);
+    assert.doesNotMatch(flat, /team has learned/, where);
   }
 });

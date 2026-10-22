@@ -44,6 +44,9 @@ import { lastResult, lastResultLine } from '../skills/check-result.js';
 import { noteCodexPrompt } from '../trace/codex.js';
 import { useFor } from '../trace/dialect.js';
 import { stopBlockReason } from '../skills/offer-words.js';
+import { recallMarks, saidIn, shownFiles, stepLearnings, withFixes } from '../skills/follow-learnings.js';
+import { readSession } from './state.js';
+import { payloadSessionId } from './hook-io.js';
 
 export { sessionStartSkills } from './start-skills.js';
 
@@ -59,6 +62,8 @@ export interface PromptDeps {
   gate: (input: unknown, dir: string, env?: NodeJS.ProcessEnv) => ReturnType<typeof skillsGate>;
   probes: ProbeOpts;
   clock: () => number;
+  /** Part 7: the file names of the learnings this session showed already (the prompt hook's and on-touch's one list). */
+  shown: () => ReadonlySet<string>;
 }
 
 /** The telemetry answer for each class g5 reports (stale and not-shown were never answered: nothing is sent). */
@@ -81,6 +86,9 @@ export function promptSkills(input: any, dir: string, env: NodeJS.ProcessEnv = p
       gate: deps.gate ?? skillsGate,
       probes: deps.probes ?? {},
       clock,
+      shown: deps.shown ?? (() => {
+        try { return shownFiles(readSession(dir, payloadSessionId(input)).injectedNotes); } catch { return new Set<string>(); }
+      }),
     };
     // Phase 2 (3.2 step 1, P30, R7): on Codex the prompt's keyed hash goes into the session first, before the catch-up
     // reads the rollout, so the typed line already there counts as the person's. A prompt that is Trail's own Stop
@@ -144,6 +152,7 @@ function inside(ctx: GateCtx, st: SkillSessionState, fold: FoldResult | null, ty
 
   // 8. The cue, while there is time for it.
   let notice: string | undefined;
+  let said: string[] | undefined;
   if (d.clock() < deadline) {
     const mine = [...st.injected].reverse().find((i) => i.cue !== 'check');
     // A block this session counts as used just now; otherwise the newest use here, within 24 hours.
@@ -168,6 +177,7 @@ function inside(ctx: GateCtx, st: SkillSessionState, fold: FoldResult | null, ty
       if (r) {
         context.push(r.context);
         notice = r.notice;
+        if (r.said?.length) said = r.said;
       }
     }
   }
@@ -176,6 +186,7 @@ function inside(ctx: GateCtx, st: SkillSessionState, fold: FoldResult | null, ty
   const out: HookOut = {};
   if (context.length) out.context = context.join('\n');
   if (notice) out.notice = notice;
+  if (said) out.said = said;
   return out;
 }
 
@@ -202,6 +213,7 @@ function saveAsk(ctx: GateCtx, st: SkillSessionState, fold: FoldResult | null, t
     repoRoot: root, home: env.HOME || homedir(), platform: process.platform,
     prior: findPriorSheet(sheet, env), moment: 'asked', applies: scope === 'every repo' ? 'every repo' : run.repoKey, now: ctx.now, askedWith: typed,
     readSheet: (id) => readRunSheet(id, env), taken: (n) => nameTaken(n, { repoKeys: keys, checkout: root || ctx.checkout, env }) !== null,
+    learnings: stepLearnings({ repoKeys: [sheet.repoKey], checkout: root, env }),
   });
   if (!compiled.ok) {
     const words = refusalWords(compiled.reason, compiled.detail);
@@ -260,7 +272,7 @@ function askRun(st: SkillSessionState, fold: FoldResult | null, typed: string): 
   return run && Date.parse(run.lastAt) >= Date.parse(last.at) ? run : null;
 }
 
-function bring(ctx: GateCtx, st: SkillSessionState, cue: CueResult, d: PromptDeps, deadline: number, run: RunState | null): { context: string; notice?: string } | null {
+function bring(ctx: GateCtx, st: SkillSessionState, cue: CueResult, d: PromptDeps, deadline: number, run: RunState | null): { context: string; notice?: string; said?: string[] } | null {
   const { env, now } = ctx;
   const c = cue.cand;
   // The risk rules on the steps as the block would show them, values filled in (a default can be edited by hand).
@@ -277,13 +289,16 @@ function bring(ctx: GateCtx, st: SkillSessionState, cue: CueResult, d: PromptDep
     if (run) run.skillId = c.ref.id;
     return { context: `[trail] Same job as before: start from the steps of skill ${nameOf(c)} above.` };
   }
+  // Part 7: what the person's live learnings say of these steps; the block says each once, and its steps are what credit reads.
+  // Read before the probes, so their budget is what is left. Past the deadline the block goes without them, and the prompt's learnings lines still say them.
+  const marks = d.clock() < deadline ? recallMarks(c.skill.steps, stepLearnings({ repoKeys: scopeKeys(ctx, st), checkout: ctx.checkout, env }), d.shown()) : [];
   const budgetMs = Math.max(0, Math.min(PROBE_BUDGET_MS, deadline - d.clock()));
   const probes = runProbes(c.skill, ctx.checkout, now, env, { ...d.probes, budgetMs });
   const lastFail = c.state?.lastFails?.length ? c.state.lastFails[c.state.lastFails.length - 1]! : null;
   // Phase 2 (3.2 step 5): the anchors' CLI scan gets only what the 400 ms leave after the probes (the hook's clock may be a test's).
   const anchorDeadline = Date.now() + Math.max(0, deadline - d.clock());
-  const block = runBlock(c, { values: cue.values, notes: cue.notes, probes, canAsk: canAsk(ctx), header: 'job', lastFail, anchorDeadline });
-  const inj = withReadyFailed(injectionFor(c, cue.values, cue.kind, st.epoch, now), probes);
+  const block = runBlock(c, { values: cue.values, notes: cue.notes, probes, canAsk: canAsk(ctx), header: 'job', lastFail, anchorDeadline, marks });
+  const inj = withReadyFailed(injectionFor({ ...c, skill: withFixes(c.skill, marks) }, cue.values, cue.kind, st.epoch, now), probes);
   if (run) {
     inj.runId = run.id;
     run.skillId = c.ref.id;
@@ -291,7 +306,8 @@ function bring(ctx: GateCtx, st: SkillSessionState, cue: CueResult, d: PromptDep
   // New values: the full block replaces that injection's values and steps (same injId, a fresh run).
   if (prior) st.injected[st.injected.indexOf(prior)] = { ...inj, injId: prior.injId };
   else st.injected.push(inj);
-  return { context: block, ...(hostFacts(env, ctx.host as Host).promptNotice ? { notice: useNotice(c) } : {}) };
+  const said = saidIn(block, marks);
+  return { context: block, ...(hostFacts(env, ctx.host as Host).promptNotice ? { notice: useNotice(c) } : {}), ...(said.length ? { said } : {}) };
 }
 
 /** The check uses the values of the block it checks, and any the question itself names. */

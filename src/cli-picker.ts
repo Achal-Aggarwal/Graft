@@ -7,6 +7,7 @@
 import { relative, dirname, sep } from 'node:path';
 import type { HostPlan, PlannedWrite } from './hosts/plan.js';
 import { brand } from './brand.js';
+import { flatLine } from './notes/flatten.js';
 
 const indigo = (s: string) => `\x1b[38;2;84;111;255m${s}\x1b[0m`;
 const muted = (s: string) => `\x1b[38;5;244m${s}\x1b[0m`;
@@ -278,7 +279,7 @@ export function renderPicker(state: PickerState, tty = true, opts: { title?: str
   // rows carry the '(not detected)' tag or the cursor's colour codes.
   const label = (r: PickerRow) => `${r.label}${r.detected || r.kind === 'setting' ? '' : ' (not detected)'}`;
   const width = Math.max(...visible.filter((r) => r.kind === 'host').map((r) => label(r).length), 12);
-  const title = opts.title === undefined ? `${brand()} init — pick the agents your team uses:` : opts.title;
+  const title = opts.title === undefined ? `${brand()} init · pick the agents your team uses:` : opts.title;
   const lines = title ? [title, ''] : [];
   let ruled = false;
   const foldLine = () => {
@@ -436,7 +437,8 @@ function learningSource(it: LearningChoice): string {
 export function learningsPickerState(items: LearningChoice[]): PickerState {
   const rows: PickerRow[] = items.map((it, i) => ({
     id: String(i),
-    label: it.title,
+    // Found by reading past sessions and other people's PR reviews: one line each.
+    label: flatLine(it.title),
     kind: 'host' as const,
     detected: true,
     hasGlobal: false,
@@ -484,7 +486,7 @@ export function formatNonInteractiveHelp(detectedIds: string[]): string {
   ];
   const width = Math.max(...examples.map(([cmd]) => cmd.length));
   return [
-    `${b} init: no TTY to prompt on, and no --agents/--yes given — nothing written.`,
+    `${b} init: no TTY to prompt on, and no --agents/--yes given: nothing written.`,
     `detected: ${list}`,
     "",
     ...examples.map(([cmd, note]) => `  ${cmd.padEnd(width)}   # ${note}`),
@@ -507,7 +509,7 @@ export function formatPlan(
   // Codex, Hermes and Antigravity all write AGENTS.md: list each write once.
   const all = plan.filter((p) => ids.includes(p.id)).flatMap((p) => p.writes);
   const writes = [...new Map(all.map((w) => [`${w.path}\0${w.what}`, w])).values()];
-  if (writes.length === 0) return 'would write — nothing (no agents selected)';
+  if (writes.length === 0) return 'would write: nothing (no agents selected)';
 
   const pad = (rows: PlannedWrite[], f: (p: string) => string) => {
     const w = Math.max(...rows.map((r) => f(r.path).length));
@@ -517,13 +519,13 @@ export function formatPlan(
   const lines: string[] = [];
   const repoWrites = writes.filter((w) => w.scope === 'repo');
   if (repoWrites.length > 0) {
-    lines.push('would write — this repo:', ...pad(repoWrites, (p) => relative(repo, p)));
+    lines.push('would write in this repo:', ...pad(repoWrites, (p) => relative(repo, p)));
   }
   const globalWrites = writes.filter((w) => w.scope === 'global');
   if (globalWrites.length > 0) {
     if (lines.length) lines.push('');
     lines.push(
-      warn('would write — your machine, affects ALL repos:'),
+      warn('would write on your machine, affects ALL repos:'),
       ...pad(globalWrites, (p) => tilde(p, home)),
       '',
       dim('suppress the out-of-repo writes with --no-global'),

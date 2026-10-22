@@ -82,7 +82,7 @@ test("after a keep: kept, not kept, refused, offers on and off (J09), esc and n"
   assert.deepEqual(afterKeepLines({ kept: [g!, p!], notKept: [s!], refused: [], how: "enter" }, factsOf()), [
     "✓ kept 2, just for you · in ~/.trail, never committed, never uploaded",
     "Not kept: release-npm. Trail won't bring it up again.",
-    "skill offers: on, at most one per session, only after a job checks out · trail skills offers off",
+    "skills: on · at most one offer per session, only after a job checks out · stop offers: trail skills offers off · all off: trail skills off",
   ]);
   assert.deepEqual(afterKeepLines({ kept: [{ ...p!, scope: "repo" }], notKept: [], refused: [{ item: s!, why: "changed" }], how: "keep" }, factsOf({ offers: "off", offersOffAt: "2026-10-09T10:00:00.000Z" })), [
     "✓ kept 1 · 0 just for you in ~/.trail, never uploaded · 1 added to this repo's .trail/learnings (commit it to share)",

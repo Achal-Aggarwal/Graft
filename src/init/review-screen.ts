@@ -17,6 +17,7 @@ import type { KeepResult } from './keep.js';
 import { nameLine } from './name-call.js';
 import { DRAFT_LINE, KEEP_LINE, RELAY_LINE } from './relay.js';
 import type { InitItem, InitKind, LookBack } from './types.js';
+import { onlyRepeats } from '../skills/follow-learnings.js';
 
 export interface ScreenFacts {
   lookBack: LookBack;
@@ -35,6 +36,8 @@ export interface ScreenFacts {
   whySaid?: string;
   /** How many PR reviews the review read went through, when it ran (the twice-asked line). */
   reviewsRead?: number;
+  /** false when no look-back ran this init (not due, or off) and the screen holds only #662's team rows. */
+  lookedBack?: boolean;
 }
 
 export const INIT_COPY: Record<string, string> = {
@@ -48,13 +51,15 @@ export const INIT_COPY: Record<string, string> = {
   guardrails: 'Guardrails',
   preferences: 'Preferences',
   reviews: 'From PR reviews',
+  team: "Your teammates' Claude doesn't know these yet",
   keys1: '↑↓ move · space tick · s see the steps · enter keep ticked · n keep nothing',
   keys2: 'w every repo or this repo · r add a preference to this repo (committed) · esc decide later',
   skillsOff: 'skills are off · trail skills on lets init also find repeated jobs and keep their steps',
   skillCount: 'Claude worked out how to {job} from scratch on {days} different days.',
   guardCount: 'Hit {words} on {days} days.',
   prefCount: 'You said this on {days} days.',
-  reviewCount: 'Flagged in review on {prs} PRs.',
+  reviewCount: 'From review on PR {prs}.',
+  claudeCount: 'From what your Claude keeps about this repo.',
   personal: 'just for you, in this repo',
   everyRepo: 'just for you, in every repo',
   repo: 'added to this repo, committed',
@@ -67,7 +72,7 @@ export const INIT_COPY: Record<string, string> = {
   keptMixed: "✓ kept {k} · {j} just for you in ~/.trail, never uploaded · {r} added to this repo's .trail/learnings (commit it to share)",
   notKept: "Not kept: {names}. Trail won't bring {them} up again.",
   refused: "{name}: its past session changed or is gone, so Trail can't check the steps. It will offer it again after the job checks out.",
-  offersOn: 'skill offers: on, at most one per session, only after a job checks out · trail skills offers off',
+  offersOn: 'skills: on · at most one offer per session, only after a job checks out · stop offers: trail skills offers off · all off: trail skills off',
   offersOff: 'skill offers are off (you turned them off on {date}) · trail skills offers on',
   afterEsc: 'kept nothing · they wait until you run trail init again',
   afterN: "kept nothing · Trail won't bring these up again",
@@ -75,7 +80,18 @@ export const INIT_COPY: Record<string, string> = {
   rLater: 'adding skills and guardrails to the repo comes in a later version',
   yesAgent: 'found {found}. Kept nothing: an agent ran this. The person picks with trail keep <numbers> after seeing the list, or trail init --look-back in their own terminal',
   yesScript: 'found {found}. Kept only the preferences (your own words). To pick the rest: trail init --look-back',
+  foldHint: 'kept with skill {n}, it goes into that skill as a lesson, since a step of it already does this',
+  folded: '· {pref} went into {skill} as a lesson, since a step of it already does that',
 };
+
+/**
+ * Part 7: the skill on this screen a preference only repeats a step of (keep.ts folds it in when both are kept), or
+ * null. Only a preference just for the person in this repo, as keep.ts folds.
+ */
+export function foldTarget(item: InitItem, items: InitItem[]): InitItem | null {
+  if (item.kind !== 'preference' || item.scope === 'repo' || item.applies === 'every repo' || !item.title) return null;
+  return items.find((s) => s.kind === 'skill' && s.skill?.compiled && onlyRepeats(item.title, s.skill.compiled.steps.map((x) => x.cmd))) ?? null;
+}
 
 /** `{x}` filled from `v`. */
 export function fill(t: string, v: Record<string, string | number>): string {
@@ -120,7 +136,7 @@ export function jobPhrase(item: Pick<InitItem, 'key' | 'skill'>, repoName: strin
 
 /** Where an item goes, in words. */
 export function scopeWords(item: Pick<InitItem, 'kind' | 'scope' | 'applies'>): string {
-  if (item.kind === 'review') return INIT_COPY.reviewRepo!;
+  if (item.kind === 'review' || item.kind === 'claude') return INIT_COPY.reviewRepo!;
   if (item.scope === 'repo') return INIT_COPY.repo!;
   return item.applies === 'every repo' ? INIT_COPY.everyRepo! : INIT_COPY.personal!;
 }
@@ -132,7 +148,12 @@ export function countSentence(item: InitItem, repoName: string): string {
     case 'skill': return fill(INIT_COPY.skillCount!, { job: jobPhrase(item, repoName), days });
     case 'guardrail': return fill(INIT_COPY.guardCount!, { words: WALLS.find((w) => w.cls === item.guardrail?.cls)?.words ?? 'this error', days });
     case 'preference': return fill(INIT_COPY.prefCount!, { days });
-    default: return fill(INIT_COPY.reviewCount!, { prs: item.review?.prs.length ?? 2 });
+    case 'claude': return INIT_COPY.claudeCount!;
+    default: {
+      // #662's source words: the PRs, three at most.
+      const prs = item.review?.prs ?? [];
+      return fill(INIT_COPY.reviewCount!, { prs: `${prs.slice(0, 3).map((p) => `#${p}`).join(', ')}${prs.length > 3 ? ` +${prs.length - 3}` : ''}` });
+    }
   }
 }
 
@@ -144,8 +165,9 @@ const plain = (t: string) => flatLine(t, 160);
 const spaced = (t: string) => Array.from(String(t ?? '').replace(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/g, ' ')
   .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f\p{Cf}]/gu, '')).slice(0, 400).join('');
 const quoted = (item: InitItem) => (item.kind === 'preference' ? `"${plain(item.title).replace(/"/g, "'")}"` : plain(item.title));
-const KIND_ORDER: InitKind[] = ['skill', 'guardrail', 'preference', 'review'];
-const GROUP: Record<InitKind, string> = { skill: 'skills', guardrail: 'guardrails', preference: 'preferences', review: 'reviews' };
+const KIND_ORDER: InitKind[] = ['skill', 'guardrail', 'preference', 'review', 'claude'];
+/** The heading over each kind; #662's team rows, from reviews and from what Claude Code keeps (kind 'claude'), share one. */
+const GROUP: Record<InitKind, string> = { skill: 'skills', guardrail: 'guardrails', preference: 'preferences', review: 'team', claude: 'team' };
 
 /** Items numbered as the screen and the relay show them: by kind, then in pickFive's order within a kind. */
 export function numbered<T extends { kind: InitKind }>(picked: T[]): Array<T & { n: number }> {
@@ -163,7 +185,7 @@ function foundLine(facts: ScreenFacts, plain: boolean): string {
 }
 
 function headLines(items: InitItem[], facts: ScreenFacts, relay: boolean): string[] {
-  const out = [foundLine(facts, relay && items.some((i) => i.kind === 'skill'))];
+  const out = facts.lookedBack === false ? [] : [foundLine(facts, relay && items.some((i) => i.kind === 'skill'))];
   if (!relay) {
     const plainNames = items.filter((i) => i.kind === 'skill').map((i) => i.plainName);
     const said = nameLine({ names: {}, model: facts.model, why: facts.why, sentItems: facts.sentSkills ?? 0, tokens: facts.tokens, ...(facts.whySaid ? { said: facts.whySaid } : {}) }, plainNames, facts.reviewsRead ?? 0);
@@ -184,17 +206,19 @@ export function screenLines(items: InitItem[], state: { cursor: number; open: nu
     return out;
   }
   out.push('');
-  let last: InitKind | null = null;
+  let last: string | null = null;
   items.forEach((item, at) => {
-    if (item.kind !== last) {
-      out.push(INIT_COPY[GROUP[item.kind]]!);
-      last = item.kind;
+    if (GROUP[item.kind] !== last) {
+      last = GROUP[item.kind];
+      out.push(INIT_COPY[last]!);
     }
     const cur = at === state.cursor ? '›' : ' ';
     const desc = item.description ? ` · ${plain(item.description)}` : '';
     out.push(`${cur} [${item.ticked ? 'x' : ' '}] ${item.n}  ${quoted(item)}${desc}`);
     const ev = item.evidence.map(plain).map((e) => ` ${e.charAt(0).toUpperCase()}${e.slice(1)}.`).join('');
-    out.push(`         ${countSentence(item, facts.repoName)}${ev} · ${scopeWords(item)}`);
+    const into = foldTarget(item, items);
+    const fold = into ? ` · ${fill(INIT_COPY.foldHint!, { n: into.n })}` : '';
+    out.push(`         ${countSentence(item, facts.repoName)}${ev} · ${scopeWords(item)}${fold}`);
     if (state.open === at) for (const l of state.openLines ?? []) out.push(`         ${spaced(l)}`);
   });
   out.push('');
@@ -206,7 +230,7 @@ export function screenLines(items: InitItem[], state: { cursor: number; open: nu
 
 /** One relayed item: `{n}. {title} ({kind}) · {count} · {scope}`. */
 export function relayItemLine(item: InitItem, repoName: string): string {
-  const kind = item.kind === 'preference' ? 'preference, your own words' : item.kind === 'review' ? 'from PR reviews' : item.kind;
+  const kind = item.kind === 'preference' ? 'preference, your own words' : item.kind === 'review' ? 'from PR reviews' : item.kind === 'claude' ? 'from what your Claude keeps' : item.kind;
   return `${item.n}. ${quoted(item)} (${kind}) · ${countSentence(item, repoName).replace(/\.$/, '')} · ${scopeWords(item)}`;
 }
 
@@ -245,10 +269,11 @@ export function afterKeepLines(r: KeepResult & { how?: 'enter' | 'n' | 'esc' | '
   if (r.how === 'esc') return [INIT_COPY.afterEsc!];
   if (!kept && !r.refused.length) return [INIT_COPY.afterN!];
   if (kept) {
-    const inRepo = r.kept.filter((i) => i.scope === 'repo' || i.kind === 'review').length;
+    const inRepo = r.kept.filter((i) => i.scope === 'repo' || i.kind === 'review' || i.kind === 'claude').length;
     out.push(inRepo ? fill(INIT_COPY.keptMixed!, { k: kept, j: kept - inRepo, r: inRepo }) : fill(INIT_COPY.kept!, { k: kept }));
   }
   for (const x of r.refused) out.push(fill(INIT_COPY.refused!, { name: plain(x.item.title) }));
+  for (const f of r.folded ?? []) out.push(fill(INIT_COPY.folded!, { pref: quoted(f.item), skill: plain(f.skill) }));
   if (r.notKept.length) out.push(fill(INIT_COPY.notKept!, { names: r.notKept.map((i) => quoted(i)).join(', '), them: r.notKept.length === 1 ? 'it' : 'them' }));
   if (facts.skills) out.push(facts.offers === 'off' ? fill(INIT_COPY.offersOff!, { date: dayWords(facts.offersOffAt) || 'an earlier day' }) : INIT_COPY.offersOn!);
   return out;

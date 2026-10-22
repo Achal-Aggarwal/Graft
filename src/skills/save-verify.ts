@@ -42,6 +42,7 @@ import { skillSha } from './offer-moment.js';
 import { hostFacts } from './host-facts.js';
 import { offerLinesOf } from './offer-lines.js';
 import { runCheckout } from './run-checkout.js';
+import { stepLearnings } from './follow-learnings.js';
 
 export interface SaveVerdict {
   deny?: string;                // set: refuse, nothing saved
@@ -340,6 +341,7 @@ export function verifySave(cmd: SkillsAddCmd | null, ctx: GateCtx, st: SkillSess
     applies: c.consent === 'asked' && sr?.scope === 'every repo' ? 'every repo' : own.repoKey,
     // The asked name is free here so compile keeps it; step 9 says where it is taken.
     taken: (n) => n !== cmd.name && nameTaken(n, scope) !== null,
+    learnings: stepLearnings({ repoKeys: [own.repoKey], checkout: root, env }),
   });
   if (!compiled.ok) return denied(`${NOT}${refusalWords(compiled.reason, compiled.detail)}.`, pick(c));
   const skill = compiled.skill;

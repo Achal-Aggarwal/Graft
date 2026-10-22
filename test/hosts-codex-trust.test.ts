@@ -4,7 +4,6 @@
  * a `trusted_hash` (the key form read from the open-source Codex, `hook_key`; HC8 confirms it on the installed
  * build). Trail only reads it: it never writes the table. A form it doesn't know is `unknown`, never a guess.
  * Temp CODEX_HOME only; nothing here reads the real one.
- * This part installs Trail's four Codex handlers; the skills wiring adds the pre_tool_use and second post_tool_use ones.
  */
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +34,7 @@ test("Trail's keys are the hooks.json path, the event's Codex label and the inde
   const { env, home } = codexHome();
   const p = join(home, 'hooks.json');
   assert.deepEqual(trailHookKeys(env), [
-    `${p}:session_start:0:0`, `${p}:user_prompt_submit:0:0`, `${p}:post_tool_use:0:0`, `${p}:stop:0:0`,
+    `${p}:session_start:0:0`, `${p}:user_prompt_submit:0:0`, `${p}:post_tool_use:0:0`, `${p}:post_tool_use:1:0`, `${p}:pre_tool_use:0:0`, `${p}:stop:0:0`,
   ]);
   // A foreign entry in front moves Trail's index, and the key follows it.
   const cfg = JSON.parse(readFileSync(p, 'utf8'));
@@ -48,11 +47,11 @@ test('no config.toml, or one with no hooks.state: untrusted, every Trail entry n
   const { env, cfg } = codexHome();
   let t = codexTrust(env);
   assert.equal(t.state, 'untrusted');
-  assert.equal(t.untrusted.length, 4);
+  assert.equal(t.untrusted.length, 6);
   writeFileSync(cfg, 'model = "gpt-5-codex"\n\n[features]\nhooks = true\n');
   t = codexTrust(env);
   assert.equal(t.state, 'untrusted');
-  assert.equal(t.untrusted.length, 4);
+  assert.equal(t.untrusted.length, 6);
 });
 
 test('a trust record for each Trail entry: trusted; one missing or turned off: untrusted, naming it', () => {
@@ -66,8 +65,8 @@ test('a trust record for each Trail entry: trusted; one missing or turned off: u
   writeFileSync(cfg, keys.map((k, i) => section(k, i === 2 ? `${HASH}\nenabled = false` : HASH)).join('\n'));
   assert.deepEqual(codexTrust(env), { state: 'untrusted', untrusted: [keys[2]] });
   // A record with no hash is no trust.
-  writeFileSync(cfg, keys.map((k, i) => section(k, i === 3 ? 'enabled = true' : HASH)).join('\n'));
-  assert.deepEqual(codexTrust(env), { state: 'untrusted', untrusted: [keys[3]] });
+  writeFileSync(cfg, keys.map((k, i) => section(k, i === 4 ? 'enabled = true' : HASH)).join('\n'));
+  assert.deepEqual(codexTrust(env), { state: 'untrusted', untrusted: [keys[4]] });
 });
 
 test('the inline form under [hooks.state] reads the same', () => {
