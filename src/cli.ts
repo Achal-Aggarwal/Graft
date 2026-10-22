@@ -1331,6 +1331,11 @@ grouped(program.command("init"), GROUP.setup)
   .option("--pair <code>", "the pair code from Trail's onboarding page: that page shows this run live, then you review what it found")
   .option("--server <url>", "the Trail that gave the code (default: Trail cloud)")
   .action(async (dir: string, opts: InitOptions) => {
+    if (opts.connect !== undefined && opts.pair !== undefined) {
+      console.error("✗ --connect and --pair are two ways in: use the one your Trail page gave you");
+      process.exitCode = 1;
+      return;
+    }
     if (opts.connect !== undefined) await runConnectInit(dir, opts);
     else await runInitCommand(dir, opts);
   });
@@ -1459,11 +1464,45 @@ function printLines(lines: string[]): void {
 /** `graft init`'s flags, as commander hands them over. */
 interface InitOptions { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; verbose?: boolean; connect?: string; pair?: string; server?: string }
 
-/** What `init --connect` hears from a run of init, as it happens: the stages the web page ticks off. */
+/** What `init --connect` and `--pair` hear from a run of init, as it happens: the stages the web page ticks off. */
 interface InitProgress {
   mapped?(m: { nodes: number; edges: number; files: number }): void;
   /** What init learned this run (team and personal), and how many past sessions it read; `notes` is empty when it learned nothing new. */
   learned?(l: { notes: Array<{ note: Note; sessions?: number }>; sessions: number }): void;
+}
+
+/**
+ * `--server <url>` on `init --connect` and `--pair`: the Trail that gave the
+ * code, kept for the rest of this run as TRAIL_URL. False, after saying why,
+ * when it isn't a URL.
+ */
+function useServerOption(raw: string | undefined): boolean {
+  const server = raw?.trim().replace(/\/+$/, "");
+  if (!server) return true;
+  if (!/^https?:\/\//.test(server)) {
+    console.error("✗ --server takes a URL, like https://dev.trailhq.com");
+    process.exitCode = 1;
+    return false;
+  }
+  process.env.TRAIL_URL = server;
+  return true;
+}
+
+/**
+ * What `init --pair` hears from init, as the onboarding page's steps: the map
+ * is done when `mapped` fires, the past sessions when `learned` does. Nothing
+ * to say for a run that read no sessions (that step is already marked).
+ */
+function pairProgress(pair: PairRun): InitProgress {
+  return {
+    mapped: (m) => pair.phase("files", "done", m.files ? `${m.files.toLocaleString("en-US")} files` : "", m.files ? `Mapped ${m.files.toLocaleString("en-US")} files` : "Mapped the code"),
+    learned: (l) => {
+      if (l.sessions <= 0) return;
+      // The PR reviews' learnings come with `sessions: 0`; the rest were said in past sessions.
+      const fromSessions = l.notes.filter((n) => n.sessions !== 0).length;
+      pair.phase("decisions", "done", `${l.sessions} sessions`, `Read ${l.sessions} past sessions: ${fromSessions} thing${fromSessions === 1 ? "" : "s"} you told Claude more than once`);
+    },
+  };
 }
 
 /** Repo-relative with forward slashes, for printing. */
@@ -1571,15 +1610,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // first, so the person can sign up while the rest of init runs.
     let pair: PairRun | null = null;
     if (opts.pair !== undefined) {
-      const server = opts.server?.trim().replace(/\/+$/, "");
-      if (server) {
-        if (!/^https?:\/\//.test(server)) {
-          console.error("✗ --server takes a URL, like https://trail.acme.internal");
-          process.exitCode = 1;
-          return null;
-        }
-        process.env.TRAIL_URL = server;
-      }
+      if (!useServerOption(opts.server)) return null;
       if (!validPairCode(opts.pair)) {
         console.error(`✗ --pair takes the code from Trail's onboarding page, got "${opts.pair}"`);
         process.exitCode = 1;
@@ -1644,10 +1675,6 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     if (!verbose) {
       pair?.phase("files", "running", "", "Mapping the code");
       const res = await buildGraphWithProgress(repo, { build: opts.build, cliPath });
-      if (pair) {
-        const files = res.graph?.files;
-        pair.phase("files", "done", files ? `${files.toLocaleString("en-US")} files` : "", files ? `Mapped ${files.toLocaleString("en-US")} files` : "Mapped the code");
-      }
       for (const m of res.messages) console.error(m);
       const existing = res.built ? null : loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
       const fmt = (x: number) => x.toLocaleString("en-US");
@@ -1666,9 +1693,12 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       }
     }
 
-    if (progress?.mapped) {
+    // --pair hears the same stages --connect does; only the ones InitProgress
+    // has no slot for (a read starting, the PR read, nothing to read) stay inline.
+    const report: InitProgress | undefined = pair ? pairProgress(pair) : progress;
+    if (report?.mapped) {
       const g = loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
-      progress.mapped({
+      report.mapped({
         nodes: g?.meta.nodeCount ?? 0,
         edges: g?.meta.edgeCount ?? 0,
         files: g ? g.nodes.filter((n) => n.kind === "file").length : 0,
@@ -1722,7 +1752,6 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         sessionsRead = result.read ?? 0;
         saved.forEach((note, i) => learnedFrom.push({ note, sessions: kept[i]?.sessions.length }));
         const offered = result.findings.length;
-        pair?.phase("decisions", "done", `${result.read} sessions`, `Read ${result.read} past sessions: ${saved.length} thing${saved.length === 1 ? "" : "s"} you told Claude more than once`);
         if (saved.length) {
           const n = saved.length;
           const what = n < offered ? `kept ${n} of the ${offered} things` : `learned ${n} thing${n === 1 ? "" : "s"}`;
@@ -1763,14 +1792,14 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         for (const note of saved) learnedFrom.push({ note, sessions: 0 });
       }
       learnedNow = learned.length > 0;
-      progress?.learned?.({ notes: learnedFrom, sessions: sessionsRead });
+      report?.learned?.({ notes: learnedFrom, sessions: sessionsRead });
       if (learnedNow) {
         console.error("· Claude follows them from your next session");
         if (learned.some((s) => s.scope === "repo")) console.error(commitLines({}, teammatesOn(repo), "repo").uncommitted);
       }
     }
     // Nothing read this run (already read once, or not Claude Code): the page still gets its stage.
-    if (!(TRAIL && (pastRead || reviewRead))) progress?.learned?.({ notes: [], sessions: 0 });
+    if (!(TRAIL && (pastRead || reviewRead))) report?.learned?.({ notes: [], sessions: 0 });
     if (TRAIL && !learnedNow) {
       const home = notesHome.get(repo);
       if (home) {
@@ -1859,15 +1888,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
     return;
   }
   const repo = resolve(dir);
-  const server = opts.server?.trim().replace(/\/+$/, "");
-  if (server) {
-    if (!/^https?:\/\//.test(server)) {
-      console.error(`✗ --server takes a URL, like https://dev.trailhq.com`);
-      process.exitCode = 1;
-      return;
-    }
-    process.env.TRAIL_URL = server;
-  }
+  if (!useServerOption(opts.server)) return;
   const base = trailUrl();
   const code = normalizeCode(opts.connect ?? "");
   if (!code) {
