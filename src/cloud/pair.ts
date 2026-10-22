@@ -89,6 +89,8 @@ export function foundLine(learnings: number, skills: number): string {
 
 /** The most found learnings one progress call may carry. */
 const FOUND_PER_CALL = 200;
+/** The most found items Trail keeps from one read. */
+const MAX_FOUND = 500;
 
 /**
  * One init run, reported to the onboarding page. Every call is best effort:
@@ -175,21 +177,30 @@ export class PairRun {
   }
 
   /**
-   * Hand over the repo's learnings, and the skills init just wrote for the
-   * team, for review, then say the read is done. A learning is a `decision`;
-   * a skill is a `skill`. A skill kept for the person alone isn't the team's
-   * to review, so it stays off the page.
+   * Hand over the repo's learnings and skills, then say the read is done. A
+   * learning is a `decision`; a skill is a `skill`. A skill kept for the
+   * person alone isn't the team's, so it stays off the page.
    */
   finish(repo: string, skills: SavedSkill[] = []): Promise<void> {
     const place = repoPlace(repo);
-    const found: Record<string, unknown>[] = place.git
-      ? [
-          ...learningsPayload(place.checkout)
-            .filter((l) => l.ref === "" && l.kind !== "skill")
-            .map((l) => ({ kind: "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches })),
-          ...skills.flatMap((s) => foundSkillItem(place.checkout, s)),
-        ]
-      : [];
+    // Everything the person's agents now start from in this repo, so the page
+    // counts what the home will: their learnings and teammates' pushed ones,
+    // then the skills this run wrote and the ones the repo already has.
+    const found: Record<string, unknown>[] = [];
+    if (place.git) {
+      const payload = learningsPayload(place.checkout);
+      const item = (l: (typeof payload)[number]) => ({
+        kind: l.kind === "skill" ? "skill" : "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches,
+      });
+      const written = skills.flatMap((s) => foundSkillItem(place.checkout, s));
+      const paths = new Set(written.map((w) => w.path));
+      found.push(
+        ...payload.filter((l) => l.kind !== "skill").map(item),
+        ...written,
+        ...payload.filter((l) => l.kind === "skill" && !paths.has(l.path)).map(item),
+      );
+      found.splice(MAX_FOUND); // Trail takes this many from one read
+    }
     const n = found.length;
     const m = found.filter((f) => f.kind === "skill").length;
     const learned = n - m;
