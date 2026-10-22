@@ -17,6 +17,7 @@ import type { KeepResult } from './keep.js';
 import { nameLine } from './name-call.js';
 import { DRAFT_LINE, KEEP_LINE, RELAY_LINE } from './relay.js';
 import type { InitItem, InitKind, LookBack } from './types.js';
+import { onlyRepeats } from '../skills/follow-learnings.js';
 
 export interface ScreenFacts {
   lookBack: LookBack;
@@ -79,7 +80,18 @@ export const INIT_COPY: Record<string, string> = {
   rLater: 'adding skills and guardrails to the repo comes in a later version',
   yesAgent: 'found {found}. Kept nothing: an agent ran this. The person picks with trail keep <numbers> after seeing the list, or trail init --look-back in their own terminal',
   yesScript: 'found {found}. Kept only the preferences (your own words). To pick the rest: trail init --look-back',
+  foldHint: 'kept with skill {n}, it goes into that skill as a lesson, since a step of it already does this',
+  folded: '· {pref} went into {skill} as a lesson, since a step of it already does that',
 };
+
+/**
+ * Part 7: the skill on this screen a preference only repeats a step of (keep.ts folds it in when both are kept), or
+ * null. Only a preference just for the person in this repo, as keep.ts folds.
+ */
+export function foldTarget(item: InitItem, items: InitItem[]): InitItem | null {
+  if (item.kind !== 'preference' || item.scope === 'repo' || item.applies === 'every repo' || !item.title) return null;
+  return items.find((s) => s.kind === 'skill' && s.skill?.compiled && onlyRepeats(item.title, s.skill.compiled.steps.map((x) => x.cmd))) ?? null;
+}
 
 /** `{x}` filled from `v`. */
 export function fill(t: string, v: Record<string, string | number>): string {
@@ -204,7 +216,9 @@ export function screenLines(items: InitItem[], state: { cursor: number; open: nu
     const desc = item.description ? ` · ${plain(item.description)}` : '';
     out.push(`${cur} [${item.ticked ? 'x' : ' '}] ${item.n}  ${quoted(item)}${desc}`);
     const ev = item.evidence.map(plain).map((e) => ` ${e.charAt(0).toUpperCase()}${e.slice(1)}.`).join('');
-    out.push(`         ${countSentence(item, facts.repoName)}${ev} · ${scopeWords(item)}`);
+    const into = foldTarget(item, items);
+    const fold = into ? ` · ${fill(INIT_COPY.foldHint!, { n: into.n })}` : '';
+    out.push(`         ${countSentence(item, facts.repoName)}${ev} · ${scopeWords(item)}${fold}`);
     if (state.open === at) for (const l of state.openLines ?? []) out.push(`         ${spaced(l)}`);
   });
   out.push('');
@@ -259,6 +273,7 @@ export function afterKeepLines(r: KeepResult & { how?: 'enter' | 'n' | 'esc' | '
     out.push(inRepo ? fill(INIT_COPY.keptMixed!, { k: kept, j: kept - inRepo, r: inRepo }) : fill(INIT_COPY.kept!, { k: kept }));
   }
   for (const x of r.refused) out.push(fill(INIT_COPY.refused!, { name: plain(x.item.title) }));
+  for (const f of r.folded ?? []) out.push(fill(INIT_COPY.folded!, { pref: quoted(f.item), skill: plain(f.skill) }));
   if (r.notKept.length) out.push(fill(INIT_COPY.notKept!, { names: r.notKept.map((i) => quoted(i)).join(', '), them: r.notKept.length === 1 ? 'it' : 'them' }));
   if (facts.skills) out.push(facts.offers === 'off' ? fill(INIT_COPY.offersOff!, { date: dayWords(facts.offersOffAt) || 'an earlier day' }) : INIT_COPY.offersOn!);
   return out;

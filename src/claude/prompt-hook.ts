@@ -16,7 +16,7 @@ import { brand, tag } from '../brand.js';
 import { scopeOf, scopesOfGraph } from '../graph/scopes.js';
 import { keepsNotes } from '../notes/home.js';
 import { findNotes, listNotes, type NoteHit } from '../notes/notes.js';
-import { notesForPrompt, relevantRetrieval, type AskJson } from './format.js';
+import { INJECTED_POINTERS_CAP, notesForPrompt, relevantRetrieval, type AskJson } from './format.js';
 import { CHILD_TIMEOUT_MS, emitHook, graftJsonWithin, payloadSessionId, withContextDirArg } from './hook-io.js';
 import { promptPart } from './skills-wiring.js';
 import { readSession, readStats, writeSession } from './state.js';
@@ -272,12 +272,26 @@ export async function handlePrompt(input: any, dir: string, opts: { budgetMs?: n
   const id = payloadSessionId(input);
   const s = readSession(dir, id);
   // What an earlier session worked out matters more than where code is.
-  const learnings = underTrail ? promptLearnings(dir, prompt, ask, byWords) : [];
+  // Part 7: a learning the run block already says (its step repeats it, or it wins over a step) is said once, there.
+  const said = new Set(skills.said ?? []);
+  const all = underTrail ? promptLearnings(dir, prompt, ask, byWords) : [];
+  const learnings = all.filter((h) => !said.has(h.note.id));
+  // The session's one shown list, which on-touch reads too: a learning the block said is not shown again on a file open.
+  if (said.size) s.injectedNotes = [...(s.injectedNotes ?? []), ...saidPaths(dir, said)].slice(-INJECTED_POINTERS_CAP);
   const notes = learnings.length ? notesForPrompt({ query: prompt, mode: 'learnings', hits: [], notes: learnings }, s) : null;
   const retrieval = ask ? relevantRetrieval(ask, s) : null;
   // A count, never the prompt: nothing the person typed is kept (spec section 6).
   if (ask) s.promptAsks = (s.promptAsks ?? 0) + 1;
   // Teammates' branches on the same code come after an edit instead (hooks.ts editOverlap).
   say([notes, retrieval].filter(Boolean).join('\n\n'));
-  if (ask || notes) writeSession(dir, id, s);
+  if (ask || notes || said.size) writeSession(dir, id, s);
+}
+
+/** The paths the session's shown list knows the learnings `ids` by (as `listNotes` gives them). [] on a read failure. */
+function saidPaths(dir: string, ids: ReadonlySet<string>): string[] {
+  try {
+    return listNotes(dir, { branches: false }).filter((n) => ids.has(n.id)).map((n) => n.path || n.title);
+  } catch {
+    return [];
+  }
 }

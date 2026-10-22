@@ -32,6 +32,7 @@ import { creditCalls, creditRun } from '../skills/ledger.js';
 import { listHeld, markHeldShown, type HeldItem } from '../skills/store-held.js';
 import { candidatesHere, indexLine, refusedAtRecall, type Candidate } from '../skills/recall.js';
 import { injectionFor, runBlock, runProbes, withReadyFailed, type ProbeOpts } from '../skills/runblock.js';
+import { recallMarks, stepLearnings, withFixes } from '../skills/follow-learnings.js';
 import { flatLine } from '../notes/flatten.js';
 import { FROM_TRAIL } from '../skills/directive-words.js';
 import { canAsk, hookError, syncGate, trimInjected, type Sent } from './skills-hook-util.js';
@@ -259,7 +260,9 @@ function reinject(ctx: GateCtx, st: SkillSessionState, openAtBoundary: string[],
   const c = cands.find((x) => x.ref.id === inj.skillId);
   if (!c || refusedAtRecall(c.skill, inj.params)) return null;
   const results = runProbes(c.skill, ctx.checkout, ctx.now, ctx.env, probes);
-  const block = runBlock(c, { values: inj.params, notes: [], probes: results, canAsk: canAsk(ctx), header: 'compact', lastFail: null });
-  st.injected.push(withReadyFailed(injectionFor(c, inj.params, 'compact', st.epoch, ctx.now), results));
+  // Part 7: the same say of the person's learnings as the block it re-sends.
+  const marks = recallMarks(c.skill.steps, stepLearnings({ repoKeys: st.scopeKeys, checkout: ctx.checkout, env: ctx.env }));
+  const block = runBlock(c, { values: inj.params, notes: [], probes: results, canAsk: canAsk(ctx), header: 'compact', lastFail: null, marks });
+  st.injected.push(withReadyFailed(injectionFor({ ...c, skill: withFixes(c.skill, marks) }, inj.params, 'compact', st.epoch, ctx.now), results));
   return block;
 }

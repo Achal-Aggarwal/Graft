@@ -157,7 +157,7 @@ function rebaseTouch(t: string, checkout: string, here: string): string {
 }
 
 /** Every `.md` in `notesDir` that parses as a note, with touches rebased onto `here`. */
-function readNotesIn(notesDir: string, checkout: string, here: string, scope: LearningScope): Note[] {
+export function readNotesIn(notesDir: string, checkout: string, here: string, scope: LearningScope): Note[] {
   let files: string[];
   try {
     files = readdirSync(notesDir).filter((f) => f.endsWith(".md"));

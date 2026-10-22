@@ -28,6 +28,7 @@ import { lessonRefused, lessonSha, LESSON_MAX, wallLessons } from './lessons.js'
 import { checkLine, ordinalWord } from './offer-words.js';
 import { newOfferId, offerBudget } from './offers.js';
 import { compileOffered, skillSha, type OfferDue, type OfferInput } from './offer-moment.js';
+import { withFollowLine } from './follow-learnings.js';
 
 /** The words of a moment-3 offer (4.13, J06) and of its saved wall lesson (4.15). Said as they are. */
 export const REPAIR_COPY: Record<string, string> = {
@@ -182,10 +183,10 @@ export function repairOfferDue(i: OfferInput): OfferDue | { due: false; why: Why
     const branches = joined && run.job === 'ship' ? stableBranches(joined.calls, joined.jobWords) : [];
     const nth = seen.epochs + 1;
     const where = lessonWhere(r.cls);
-    const lines = repairLines({
+    const lines = withFollowLine(repairLines({
       checkLine: hit ? checkLine(hit, branches) : 'Done: the check passed.', nth, days: daysSince(seen.firstAt, now), cls: r.cls, delta: r.delta,
       program, as: asSkill ? 'skill' : 'lesson', steps: asSkill ? stepsTotal(compiled.skill) : 1, lessonText: lesson, where,
-    });
+    }), asSkill && compiled.ok ? compiled.skill.followed : undefined);
     const offer: PendingOffer = {
       offerId: newOfferId(), moment: 'repaired', runId: run.id, name: asSkill ? compiled.skill.name : r.cls, key, lines, channel,
       shownAt: channel === 'post-tool' ? null : now.toISOString(), showMe: false, yes: null, typedAfter: [], repo: run.repoKey,

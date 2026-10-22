@@ -27,6 +27,8 @@ import { notSaved } from './offer-words.js';
 /** Moment 5 (4.7). `line2*` end with the keys the person answers with. */
 export const UPDATE_COPY = {
   line1Update: '{check} This time step {step} of {name} failed and {cmds} worked instead.',
+  line1Preference: '{check} This time {steps} of {name} ran as {cmds}, the way {follows} says.',
+  line2Preference: 'Change {steps} of {name} to match? {size} (yes / show me / no)',
   line1Extend: '{check} This time {name} also needed {cmds} {where}.',
   line1Split: '{check} This time {name} ran only steps {from} to {to}, as it did last time.',
   line2Lesson: 'Fold your {date} lesson into {name} as {steps}? {size} (yes / show me / no)',
@@ -77,7 +79,10 @@ const pairOf = (a: string, b: string): [string, string] => [flatLine(a, LINE_MAX
 
 export interface UpdateFacts {
   op: 'update' | 'extend' | 'split';
-  why?: 'failed-then-worked' | 'lesson' | 'two-uses';
+  why?: 'failed-then-worked' | 'lesson' | 'two-uses' | 'preference';
+  /** Part 7, why 'preference': whose learning the steps followed ("your preference"), and every step it changes. */
+  follows?: string;
+  steps?: number[];
   /** The job's check as 1a's `checkLine` says it ("Published 0.22.4: npm shows it."). */
   check: string;
   name: string;
@@ -105,6 +110,13 @@ export function updateLines(f: UpdateFacts): [string, string] {
     return pairOf(fill(C.line1Split, { check, name, ...s }), fill(C.line2Split, { ...s, name, new: one(f.split.name) }));
   }
   if (f.op === 'update') {
+    if (f.why === 'preference' && f.follows) {
+      const ns = f.steps?.length ? f.steps : [f.at];
+      const steps = ns.length === 1 ? `step ${ns[0]}` : `steps ${both(ns.map(String))}`;
+      const all = f.cmds.map(quoted);
+      const ran = all.length > 2 ? `${all.slice(0, 2).join(', ')} and ${all.length - 2} more` : both(all);
+      return pairOf(fill(C.line1Preference, { check, name, steps, cmds: ran, follows: one(f.follows) }), fill(C.line2Preference, { steps, name, size }));
+    }
     return pairOf(fill(C.line1Update, { check, name, step: f.at, cmds }), fill(C.line2Update, { step: f.at, name, size }));
   }
   const n = Math.min(2, Math.max(1, f.cmds.length));

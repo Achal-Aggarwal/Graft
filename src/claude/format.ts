@@ -244,7 +244,7 @@ export function formatRetrieval(ask: AskJson, cap = 5): string | null {
 export const INJECT_MIN_COVERAGE = 0.15;
 
 /** How many recently-injected pointers the novelty gate remembers per session. */
-const INJECTED_POINTERS_CAP = 40;
+export const INJECTED_POINTERS_CAP = 40;
 
 /** How many weak-match nudges one session may spend. A line that shows up every
  * turn stops being read; two is enough to land the habit without becoming
