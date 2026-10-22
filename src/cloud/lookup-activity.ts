@@ -9,7 +9,7 @@ import { noteAuthor } from "../notes/git-facts.js";
 import { noteName } from "../notes/notes.js";
 import { sessionKey } from "./nudge.js";
 import { readCloud, type Cloud } from "./workspace.js";
-import { recordActivity } from "./workspace-sync.js";
+import { recordActivity, records } from "./workspace-sync.js";
 
 /** The file part of a hit's `file:Lx-Ly` pointer. */
 function pointerFile(pointer: string): string {
@@ -19,22 +19,29 @@ function pointerFile(pointer: string): string {
 /**
  * Queue one search event for `r`, when it showed a learning or saved tokens.
  * Uses are counted from the learnings shown only; `saved_tokens` rides along.
- * Never throws.
+ * Query and files are sent only with a shown learning. Never throws.
  */
 export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = readCloud()): void {
   try {
+    // Cheapest checks first: most lookups are on a machine that isn't connected,
+    // or in a repo outside the workspace, and must cost nothing here.
+    const key = repoPlace(repo).key;
+    if (!records(cloud, key)) return;
     const shown = r.notes ?? [];
     const saved = askSavedTokens(r);
     if (!shown.length && saved <= 0) return;
     const me = noteAuthor(repo);
+    // A lookup that showed no learning leaves with its savings only: the query
+    // and the files it touched are session text, and stay on this machine.
+    const used = shown.length > 0;
     recordActivity(
       {
-        repo: repoPlace(repo).key,
+        repo: key,
         kind: "search",
         asker: me,
         session: sessionKey(repo) ?? `${me}-${new Date().toISOString().slice(0, 10)}`,
-        query: r.query,
-        files: [...new Set(r.hits.map((h) => pointerFile(h.pointer)))],
+        query: used ? r.query : "",
+        files: used ? [...new Set(r.hits.map((h) => pointerFile(h.pointer)))] : [],
         shown_paths: shown.map((h) => noteName(h.note)),
         shown_authors: shown.map((h) => h.note.author),
         ...(saved > 0 ? { saved_tokens: saved } : {}),

@@ -148,13 +148,18 @@ function sendable(e: ActivityEvent, cloud: Cloud): boolean {
   return cloud.repos.includes(e.repo) && Date.parse(e.at) >= (cloud.linkedAt || 0);
 }
 
+/** Whether uses of `repo` are recorded at all: connected by `pair`/login (not `connect`) and the repo is the workspace's. */
+export function records(cloud: Cloud | null, repo: string): cloud is Cloud {
+  return !!cloud && cloud.via !== "connect" && cloud.repos.includes(repo);
+}
+
 /**
  * Remember one use of the learnings, to send with the next sync: only while
  * this machine is connected, and only for a repo in the workspace. Not
  * connected, or another repo, and nothing is written. Never throws.
  */
 export function recordActivity(e: ActivityEvent, cloud: Cloud | null = readCloud()): void {
-  if (!cloud || cloud.via === "connect" || !cloud.repos.includes(e.repo)) return;
+  if (!records(cloud, e.repo)) return;
   try {
     const p = outboxPath();
     appendFileSync(p, `${JSON.stringify(e)}\n`);

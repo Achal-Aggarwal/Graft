@@ -66,7 +66,8 @@ test("a lookup that saved tokens is queued with them, though no learning was sho
   assert.equal(events[0].kind, "search");
   assert.equal(events[0].saved_tokens, 15392);
   assert.deepEqual(events[0].shown_paths, []);
-  assert.equal(events[0].query, "retry count");
+  assert.equal(events[0].query, "", "session text stays on this machine");
+  assert.deepEqual(events[0].files, []);
 });
 
 test("no estimate and no learning shown: nothing is queued", () => {
@@ -89,6 +90,8 @@ test("a learning shown without an estimate is still a use, with no saved_tokens"
   const events = queued();
   assert.equal(events.length, 1);
   assert.deepEqual(events[0].shown_paths, ["2026-10-09-jitter-kumar.md"]);
+  assert.equal(events[0].query, "retry count", "unchanged: a shown learning keeps its query and files");
+  assert.deepEqual(events[0].files, ["client.go"]);
   assert.equal("saved_tokens" in events[0], false);
 });
 
@@ -102,4 +105,42 @@ test("an estimate with a learning shown carries both", () => {
   assert.equal(e.saved_tokens, askSavedTokens(r), "the learning is in the pack, so it counts against the saving");
   assert.ok(e.saved_tokens > 0);
   assert.deepEqual(e.shown_paths, ["2026-10-09-jitter-kumar.md"]);
+});
+
+/** A result whose `saved` is counted when read, to prove a refused lookup does no work. */
+function countingReads(r: AskResult): { reads: () => number } {
+  let n = 0;
+  const saved = r.saved;
+  Object.defineProperty(r, "saved", { get: () => (n++, saved), configurable: true });
+  return { reads: () => n };
+}
+
+test("not connected: nothing is computed or queued", () => {
+  reset();
+  const { repo } = repoAndCloud();
+  const r = resultSaving(15392);
+  const c = countingReads(r);
+  recordLookup(r, repo, null);
+  assert.equal(c.reads(), 0);
+  assert.equal(queued().length, 0);
+});
+
+test("a connection made by `connect` records nothing", () => {
+  reset();
+  const { repo, cloud } = repoAndCloud();
+  const r = resultSaving(15392);
+  const c = countingReads(r);
+  recordLookup(r, repo, { ...cloud, via: "connect" });
+  assert.equal(c.reads(), 0);
+  assert.equal(queued().length, 0);
+});
+
+test("a repo outside the workspace records nothing", () => {
+  reset();
+  const { repo, cloud } = repoAndCloud();
+  const r = resultSaving(15392);
+  const c = countingReads(r);
+  recordLookup(r, repo, { ...cloud, repos: ["github.com/acme/other"] });
+  assert.equal(c.reads(), 0);
+  assert.equal(queued().length, 0);
 });
