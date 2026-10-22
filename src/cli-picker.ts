@@ -300,7 +300,7 @@ export function renderPicker(state: PickerState, tty = true, opts: { title?: str
       ruled = true;
     }
     const here = i === state.cursor;
-    const box = state.checked.has(row.id) ? '[x]' : '[ ]';
+    const box = state.checked.has(row.id) ? '[✓]' : '[ ]';
     const gap = ' '.repeat(Math.max(0, width - label(row).length));
     const name = here ? hot(row.label) : row.label;
     const tag = row.detected || row.kind === 'setting' ? '' : dim(' (not detected)');

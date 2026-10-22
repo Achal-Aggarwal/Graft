@@ -12,15 +12,20 @@
  */
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildGraph } from "../src/graph/build.js";
 import { checkGraph } from "../src/graph/check.js";
+import { extractFile } from "../src/graph/extract.js";
 import {
   missingNativePackages,
   nativeFallbackNotice,
   nativeReady,
   realNativeRequire,
+  requireGrammar,
   setNativeRequireForTest,
 } from "../src/graph/native.js";
 import { tmpRepo } from "./helpers.js";
@@ -43,6 +48,8 @@ const KOTLIN = [
 ].join("\n");
 
 const PY = ["class Store:", "    def load(self):", "        return fetch()", "", "def fetch():", "    return 1", ""].join("\n");
+
+const SWIFT = ["class Greeter {", "    func greet() -> String { return helper() }", "}", "", 'func helper() -> String { return "hi" }', ""].join("\n");
 
 const TS = ["export function add(a: number, b: number): number {", "  return a + b;", "}", "export function twice(a: number): number {", "  return add(a, a);", "}", ""].join("\n");
 
@@ -182,4 +189,25 @@ test("a .vue file's script falls back with its language, spans still on the .vue
   const shout = readGraph(wiringPath(r.contextDir))!.nodes.find((n) => n.name === "shout");
   assert.ok(shout, "the script's function is still indexed");
   assert.equal(shout.span, "L6-L8");
+});
+
+test("the vendored Swift grammar parses exactly like the package it is copied from", () => {
+  const out = mkdtempSync(join(tmpdir(), "vendor-"));
+  const script = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "vendor-grammars.mjs");
+  const run = spawnSync(process.execPath, [script, out], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+
+  setNativeRequireForTest(null);
+  const fromPackage = extractFile("app/Greeter.swift", SWIFT, "swift");
+  setNativeRequireForTest((id) => (id === "tree-sitter-swift" ? requireGrammar(id, out) : realNativeRequire(id)));
+  const fromVendor = extractFile("app/Greeter.swift", SWIFT, "swift");
+  assert.ok(nativeReady("swift"), "the vendored binary loads");
+  assert.deepEqual(fromVendor, fromPackage);
+  assert.ok(fromVendor.nodes.some((n) => n.name === "Greeter" && n.origin === "ast"), "parsed on the native tier");
+});
+
+test("a vendored grammar that won't load names no install flag, since none would fix it", () => {
+  setNativeRequireForTest(failing(["tree-sitter-swift"]));
+  assert.equal(nativeReady("swift"), false);
+  assert.deepEqual(missingNativePackages(["swift"]), []);
 });

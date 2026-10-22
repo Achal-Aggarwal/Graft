@@ -197,17 +197,17 @@ test('renderPicker marks the cursor and folds undetected hosts into one line', (
   const state = initialPickerState(planInit(repo, { home }), repo, home);
   const text = renderPicker(state, false);
   assert.match(text, /^graft init — pick the agents your team uses:/);
-  assert.match(text, /› \[x\] claude/);
+  assert.match(text, /› \[✓\] claude/);
   assert.doesNotMatch(text, /\[ \] cursor/, 'an agent graft cannot find is folded away');
   assert.match(text, /\+ \d+ not detected \(.*cursor.*\) · m to show/);
   assert.match(text, /space toggle · a all · m more · enter confirm/);
   // Only the detected rows get a checkbox until `m`.
-  assert.equal(text.split('\n').filter((l) => /\[[ x]\]/.test(l)).length, visibleRows(state).length);
+  assert.equal(text.split('\n').filter((l) => /\[[ ✓]\]/.test(l)).length, visibleRows(state).length);
 
   const opened = reducePicker(state, 'more');
   const all = renderPicker(opened, false);
   assert.match(all, /\[ \] cursor \(not detected\)/);
-  assert.equal(all.split('\n').filter((l) => /\[[ x]\]/.test(l)).length, state.rows.length);
+  assert.equal(all.split('\n').filter((l) => /\[[ ✓]\]/.test(l)).length, state.rows.length);
 });
 
 test('a never selects an agent that is folded away', () => {
@@ -337,7 +337,7 @@ test('a (toggle all) is about agents and leaves the consent answer alone', () =>
 test('the rendered row shows the label, a rule, and what is not collected', () => {
   const repo = fresh(); const home = fullHome();
   const out = renderPicker(initialPickerState(planInit(repo, { home }), repo, home, { offerTelemetry: true }), false);
-  assert.match(out, /\[x\] anonymous usage stats/);
+  assert.match(out, /\[✓\] anonymous usage stats/);
   assert.match(out, /no code, no file paths, no queries/);
   assert.equal(out.includes(TELEMETRY_ROW_ID), false, 'the internal id must never be shown');
   assert.match(out, /─/, 'a rule separates the settings from the agents');
@@ -351,9 +351,9 @@ test("the learnings picker ticks the team's learnings, leaves the person's own u
   ]);
   assert.deepEqual(keptLearnings(state), [0, 2]);
   const shown = renderPicker(state, false, { title: 'keep:' });
-  assert.match(shown, /\[x\] Return a 500 when db\.query fails\s+for your team · from review on PR #41, #38/);
+  assert.match(shown, /\[✓\] Return a 500 when db\.query fails\s+for your team · from review on PR #41, #38/);
   assert.match(shown, /\[ \] Say what you understood first\s+just for you · told Claude in 4 sessions/);
-  assert.match(shown, /\[x\] Run go test with -race\s+for your team · from your Claude's memory of this repo/);
+  assert.match(shown, /\[✓\] Run go test with -race\s+for your team · from your Claude's memory of this repo/);
   state = reducePicker(reducePicker(state, 'down'), 'space');
   assert.deepEqual(keptLearnings(state), [0, 1, 2]);
   state = reducePicker(state, 'space');
