@@ -10,6 +10,7 @@
  * and sends `skill_saved`, because the save gate's import closure may not load
  * telemetry. Telemetry carries closed-set values only, never a name.
  */
+import { homedir } from 'node:os';
 import { Argument, InvalidArgumentError, type Command } from 'commander';
 import { repoPlace } from '../notes/home.js';
 import { flatLine } from '../notes/flatten.js';
@@ -199,7 +200,7 @@ function draft(x: Io, runId: string, print: boolean): void {
   const root = runCheckout(sheet, x.env, place.git && place.key === sheet.repoKey ? place.checkout : '');
   const scope = { repoKeys: [sheet.repoKey], checkout: root, env: x.env };
   const opts = {
-    repoRoot: root, home: x.env.HOME || '', platform: process.platform,
+    repoRoot: root, home: x.env.HOME || homedir(), platform: process.platform,
     prior: findPriorSheet(sheet, x.env), applies: sheet.repoKey, now: x.now(), readSheet: (id: string) => readRunSheet(id, x.env),
     taken: (n: string) => nameTaken(n, scope) !== null,
   };
