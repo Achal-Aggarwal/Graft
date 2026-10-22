@@ -14,14 +14,11 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { graftCliPath } from "../claude/paths.js";
 import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
-import type { SavedSkill } from "../skills/found-skill.js";
-import { skillDirs, skillName } from "../skills/skills.js";
-import { matter } from "../util/front-matter.js";
+import type { FoundSkill } from "../init/run.js";
+import { skillName } from "../skills/skills.js";
 import { newState } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
@@ -53,38 +50,42 @@ export interface PairFindings {
 }
 
 /**
- * One team skill init just wrote as a found item. Nothing for a skill that was
- * already there, a skill kept for the person alone, or a file that isn't under
- * the repo's own `.claude/skills/`: only what init wrote into the repo goes up.
+ * A skill the look-back found, as a found item: its title and on how many
+ * days it came up, labelled kept on this machine. Never its steps: init's
+ * skills are the person's own (they go to ~/.trail, and only when kept
+ * through `trail keep` or the screen), so the page names them and
+ * nothing more. Its path is not a repo path, so it can't be taken for one of
+ * the repo's skills.
  */
-function foundSkillItem(checkout: string, s: SavedSkill): Record<string, unknown>[] {
-  const name = skillName(s.skill.name);
-  const expected = join(skillDirs(checkout).repo, name, "SKILL.md");
-  if (!s.created || s.skill.for !== "team" || !name || resolve(s.path) !== resolve(expected)) return [];
-  let text: string;
-  try {
-    text = readFileSync(s.path, "utf8");
-  } catch {
-    return [];
-  }
+function machineSkillItem(s: FoundSkill, author: string): Record<string, unknown>[] {
+  const name = skillName(s.name);
+  const title = s.title.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!name || !title) return [];
+  const days = Math.max(0, Math.floor(s.days));
   return [
     {
       kind: "skill",
-      path: `.claude/skills/${name}/SKILL.md`,
-      title: s.skill.title,
-      author: noteAuthor(checkout),
-      body: matter(text).content.trim(),
-      hash: createHash("sha256").update(text).digest("hex"),
+      path: `~/.trail/skills/${name}`,
+      title,
+      why: `kept on this machine · came up on ${days} day${days === 1 ? "" : "s"}`,
+      author,
+      body: "",
+      hash: createHash("sha256").update(`machine-skill:${s.id}`).digest("hex"),
       touches: [],
     },
   ];
 }
 
-/** "Found 3 learnings and 1 skill for your team"; the skills part is left out when there are none. */
-export function foundLine(learnings: number, skills: number): string {
+/**
+ * "Found 3 learnings and 1 skill for your team"; the skills part is left out
+ * when there are none. Skills kept on this machine are counted apart: they
+ * aren't the team's.
+ */
+export function foundLine(learnings: number, skills: number, mine = 0): string {
   const l = `${learnings} learning${learnings === 1 ? "" : "s"}`;
   const sk = `${skills} skill${skills === 1 ? "" : "s"}`;
-  return `Found ${learnings === 0 && skills > 0 ? sk : skills > 0 ? `${l} and ${sk}` : l} for your team`;
+  const team = `Found ${learnings === 0 && skills > 0 ? sk : skills > 0 ? `${l} and ${sk}` : l} for your team`;
+  return mine > 0 ? `${team}, and ${mine} skill${mine === 1 ? "" : "s"} kept on this machine` : team;
 }
 
 /** The most found learnings one progress call may carry. */
@@ -177,37 +178,37 @@ export class PairRun {
 
   /**
    * Hand over the repo's learnings and skills, then say the read is done. A
-   * learning is a `decision`; a skill is a `skill`. A skill kept for the
-   * person alone isn't the team's, so it stays off the page.
+   * learning is a `decision`; a skill is a `skill`. The skills the look-back
+   * found (`found`) go last, by title and day count only, labelled kept on
+   * this machine: a pick on the page saves nothing here.
    */
-  finish(repo: string, skills: SavedSkill[] = []): Promise<void> {
+  finish(repo: string, found: FoundSkill[] = []): Promise<void> {
     const place = repoPlace(repo);
     // Everything the person's agents now start from in this repo, so the page
     // counts what the home will: their learnings and teammates' pushed ones,
-    // then the skills this run wrote and the ones the repo already has.
-    const found: Record<string, unknown>[] = [];
+    // and the skills the repo has. Then the skills found on this machine.
+    const items: Record<string, unknown>[] = [];
     if (place.git) {
       const payload = reviewPayload(place.checkout);
       const item = (l: (typeof payload)[number]) => ({
         kind: l.kind === "skill" ? "skill" : "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches,
       });
-      const written = skills.flatMap((s) => foundSkillItem(place.checkout, s));
-      const paths = new Set(written.map((w) => w.path));
-      found.push(
-        ...payload.filter((l) => l.kind !== "skill").map(item),
-        ...written,
-        ...payload.filter((l) => l.kind === "skill" && !paths.has(l.path)).map(item),
-      );
-      found.splice(MAX_FOUND); // Trail takes this many from one read
+      items.push(...payload.filter((l) => l.kind !== "skill").map(item), ...payload.filter((l) => l.kind === "skill").map(item));
     }
-    const n = found.length;
-    const m = found.filter((f) => f.kind === "skill").length;
-    const learned = n - m;
+    const author = noteAuthor(repo);
+    const mine = found.flatMap((s) => machineSkillItem(s, author));
+    items.splice(MAX_FOUND - Math.min(mine.length, MAX_FOUND));
+    items.push(...mine);
+    items.splice(MAX_FOUND); // Trail takes this many from one read
+    const n = items.length;
+    const machine = Math.min(mine.length, MAX_FOUND);
+    const m = items.filter((f) => f.kind === "skill").length - machine;
+    const learned = n - m - machine;
     this.phases = this.phases.map((p) => (p.status === "done" ? p : { ...p, status: "done" as const }));
     this.phases = this.phases.map((p) => (p.id === "learnings" ? { ...p, count: String(n) } : p));
     for (let i = 0; i < Math.max(n, 1); i += FOUND_PER_CALL) {
-      const part = found.slice(i, i + FOUND_PER_CALL);
-      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m)] } : {}) });
+      const part = items.slice(i, i + FOUND_PER_CALL);
+      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m, machine)] } : {}) });
     }
     this.send({ done: true });
     return this.flush();

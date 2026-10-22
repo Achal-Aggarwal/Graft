@@ -8,14 +8,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRAND_ENV } from "../src/brand.js";
 import { writeNote } from "../src/notes/notes.js";
 import { finishPair, foundLine, PairRun, validPairCode } from "../src/cloud/pair.js";
 import { teammatesChecked, teammatesFromGit } from "../src/cloud/onboarding.js";
-import { saveFoundSkill } from "../src/skills/found-skill.js";
 import { readCloud } from "../src/cloud/workspace.js";
 import { tmpRepo } from "./helpers.js";
 
@@ -232,14 +231,55 @@ test("the count line names learnings and skills apart, and pluralises", async ()
   assert.equal(foundLine(2, 3), "Found 2 learnings and 3 skills for your team");
   assert.equal(foundLine(0, 2), "Found 2 skills for your team");
 
+  assert.equal(foundLine(1, 0, 2), "Found 1 learning for your team, and 2 skills kept on this machine");
+  assert.equal(foundLine(0, 1, 1), "Found 1 skill for your team, and 1 skill kept on this machine");
+});
+
+/** The found items init --pair sent the page. */
+const foundItems = (t: { calls: Call[] }) => progressCalls(t).flatMap((c) => (c.body.found as Record<string, unknown>[] | undefined) ?? []);
+
+test("a skill the look-back found goes to the page by title and day count, labelled kept on this machine, with no steps", async () => {
   freshHome();
   const dir = repo();
-  const skill = { name: "cut a release", title: "Cut a release", for: "team" as const, steps: ["Run `npm test`", "Run `npm publish`"], sessions: ["a", "b"], quotes: [] };
-  const saved = [{ skill, ...saveFoundSkill(dir, skill) }];
   const t = okTrail();
   const run = await PairRun.start(dir, "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
   assert.ok(run instanceof PairRun);
-  await run.finish(dir, saved);
+  await run.finish(dir, [{ id: "i-0123456789", name: "release-npm", title: "Publish to npm", days: 3 }]);
+
+  const found = foundItems(t);
+  assert.deepEqual(found.map((f) => [f.kind, f.title]), [["decision", "Keep payment retries at 4"], ["skill", "Publish to npm"]]);
+  const skill = found[1]!;
+  assert.equal(skill.path, "~/.trail/skills/release-npm", "not a repo path: it can't be taken for one of the repo's skills");
+  assert.equal(skill.why, "kept on this machine · came up on 3 days");
+  assert.equal(skill.body, "", "never the skill's steps");
+  assert.doesNotMatch(JSON.stringify(found), /npm publish/);
+  const logs = progressCalls(t).flatMap((c) => (c.body.log as string[] | undefined) ?? []);
+  assert.ok(logs.includes("Found 1 learning for your team, and 1 skill kept on this machine"), logs.join(" | "));
+  // Nothing is saved here for it: a pick on the page keeps nothing on this machine.
+  assert.equal(existsSync(join(dir, ".claude", "skills")), false);
+  assert.equal(existsSync(join(process.env.TRAIL_HOME!, "skills")), false);
+});
+
+test("a skill the repo tracks goes to the page as the team's, with its body; an untracked one does not", async () => {
+  freshHome();
+  const dir = repo();
+  const write = (name: string) => {
+    mkdirSync(join(dir, ".claude", "skills", name), { recursive: true });
+    writeFileSync(join(dir, ".claude", "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} steps\n---\n\n1. Run the ${name} script.\n`);
+  };
+  write("cut-a-release");
+  git(dir, ["add", "-A", "-f"]);
+  git(dir, ["commit", "-q", "-m", "skill"]);
+  write("scratch-idea");
+  const t = okTrail();
+  const run = await PairRun.start(dir, "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  await run.finish(dir);
+  const found = foundItems(t);
+  assert.deepEqual(found.map((f) => f.kind), ["decision", "skill"]);
+  assert.match(String(found[0]!.path), /^\.trail\/learnings\/.+\.md$/);
+  assert.equal(found[1]!.path, ".claude/skills/cut-a-release/SKILL.md");
+  assert.match(String(found[1]!.body), /Run the cut-a-release script/);
   const logs = progressCalls(t).flatMap((c) => (c.body.log as string[] | undefined) ?? []);
   assert.ok(logs.includes("Found 1 learning and 1 skill for your team"), logs.join(" | "));
 });

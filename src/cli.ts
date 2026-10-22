@@ -61,7 +61,7 @@ import { listSessionIds, readSession, sessionDir } from "./claude/state.js";
 import { costLabel, listNotes, noteName, notePlace, noteTargets, readingTokens, commitLines, PERSONAL_SAVED_LINE, PR_SPEEDUP, SECTIONS, tokensWorthSaying, sectionLead, shortDate, tokensLabel, writeNote, type Note, mentionedFiles } from "./notes/notes.js";
 import { aboutTerms, currentSessionCost } from "./notes/session-cost.js";
 import { flatLine, unmarkedWords } from "./notes/flatten.js";
-import { beginLookBack, finishLookBack } from "./init/run.js";
+import { beginLookBack, finishLookBack, type FoundSkill } from "./init/run.js";
 import { keepCommand } from "./init/keep.js";
 import { recordInit, snapInit } from "./init/install-paths.js";
 import { finishPair, PairRun, validPairCode } from "./cloud/pair.js";
@@ -1669,8 +1669,9 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // are, and how many there already are.
     let learnedNow = false;
     let teamSaved = 0;
-    // What the look-back read, for the --pair and --connect pages.
+    // What the look-back read, for the --pair and --connect pages, and the skills it found (--pair names them).
     let sessionsRead = 0;
+    let skillsFound: FoundSkill[] = [];
     if (lookBack) {
       // With --pair the person reviews what was found on Trail's page, so no screen here, as with no terminal.
       const screen = tty && !pair;
@@ -1689,6 +1690,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         for (const note of fromMemory.saved) console.error(`    ${note.scope === "personal" ? "just for you " : "for your team"} · ${note.title}`);
       }
       sessionsRead = learned.read?.sessions ?? 0;
+      skillsFound = learned.skills ?? [];
       const prs = learned.read?.prs;
       if (pair && prs !== undefined && prs !== null) {
         const n = fromReviews?.saved.length ?? 0;
@@ -1773,7 +1775,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const teammates = teammatesChecked(repo, { learnings: teamNotes });
       pair.teamDone(teammates);
       pair.findings({ tokens, sessions: lookBack?.reads.lb ? sessionsRead : undefined, teammates });
-      await pair.finish(repo);
+      await pair.finish(repo, skillsFound);
       pair.handOff(repo);
       console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);
       if (!process.stdout.isTTY) console.error(`[trail] Tell the user, in one line: their Trail page has moved on; review what Trail found there. If it isn't open, the link is ${pair.url}`);
