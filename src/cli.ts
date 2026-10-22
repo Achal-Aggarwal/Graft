@@ -1337,7 +1337,7 @@ grouped(program.command("init"), GROUP.setup)
     "connect this machine to your Trail workspace with the one-time code from team.trailhq.com, and send it a summary of this repo (titles, counts and names; never code)",
   )
   .option("--pair <code>", "the pair code from Trail's onboarding page: that page shows this run live, then you review what it found")
-  .option("--server <url>", "the Trail that gave the code (default: Trail cloud)")
+  .option("--server <url>", "the Trail that gave the code (default: Trail cloud, https://team.trailhq.com)")
   .action(async (dir: string, opts: InitOptions) => {
     if (opts.connect !== undefined && opts.pair !== undefined) {
       console.error("✗ --connect and --pair are two ways in: use the one your Trail page gave you");
@@ -2268,7 +2268,7 @@ function loginCommand(name = "login"): Command {
   return new Command(name)
     .description("Connect this machine to a Trail workspace: sign in, pick the repos it gets, invite your team")
     .argument("[dir]", "the repo you're in, ticked first in the picker", ".")
-    .option("--server <url>", "a self-hosted Trail, e.g. https://trail.acme.internal (default: Trail cloud)")
+    .option("--server <url>", "a self-hosted Trail, e.g. https://trail.acme.internal (default: Trail cloud, https://team.trailhq.com)")
     .action(async (dir: string, opts: { server?: string }) => {
       const repo = resolve(dir);
       const server = opts.server?.trim().replace(/\/+$/, "");
