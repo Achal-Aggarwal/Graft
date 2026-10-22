@@ -13,8 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRAND_ENV } from "../src/brand.js";
 import { writeNote } from "../src/notes/notes.js";
-import { finishPair, PairRun, validPairCode } from "../src/cloud/pair.js";
-import { teammatesFromGit } from "../src/cloud/onboarding.js";
+import { finishPair, foundLine, PairRun, validPairCode } from "../src/cloud/pair.js";
+import { teammatesChecked, teammatesFromGit } from "../src/cloud/onboarding.js";
+import { saveFoundSkill } from "../src/skills/found-skill.js";
 import { readCloud } from "../src/cloud/workspace.js";
 import { tmpRepo } from "./helpers.js";
 
@@ -186,16 +187,56 @@ test("findings leave out what is undefined or null", async () => {
   assert.deepEqual(f.teammates, []);
 });
 
-test("teammates absent on a repo without origin", async () => {
+test("a repo without an origin remote sends findings without teammates, not an empty list", async () => {
   freshHome();
   const dir = tmpRepo("pair-no-origin");
   git(dir, ["init", "-q", "-b", "main"]);
-  assert.deepEqual(teammatesFromGit(dir), []);
+  assert.equal(teammatesChecked(dir), undefined, "nothing to check against");
+  assert.deepEqual(teammatesFromGit(dir), [], "the connect summary still takes a list");
   const t = okTrail();
   const run = await PairRun.start(repo(), "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
   assert.ok(run instanceof PairRun);
-  run.findings({ teammates: [] });
+  const teammates = teammatesChecked(dir);
+  run.teamDone(teammates);
+  run.findings({ sessions: 2, teammates });
   await run.flush();
-  const f = progressCalls(t).find((c) => c.body.findings)!.body.findings as { teammates: unknown[] };
-  assert.deepEqual(f.teammates, []);
+  const calls = progressCalls(t);
+  const f = calls.find((c) => c.body.findings)!.body.findings as Record<string, unknown>;
+  assert.equal("teammates" in f, false);
+  assert.equal(f.sessions, 2);
+  const team = (calls.filter((c) => c.body.phases).at(-1)!.body.phases as { id: string; count: string }[]).find((p) => p.id === "team")!;
+  assert.equal(team.count, "skipped", "not '0 people', which would say it was checked");
+});
+
+test("the token step says it is an estimate", async () => {
+  freshHome();
+  const t = okTrail();
+  const run = await PairRun.start(repo(), "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  run.tokensDone({ question: "how Do works", symbol: "Do", saved: 15392, pack: 2048, baseline: 17440, pct: 88, files: 3 });
+  await run.flush();
+  const last = progressCalls(t).at(-1)!.body;
+  const tokens = (last.phases as { id: string; count: string }[]).find((p) => p.id === "tokens")!;
+  assert.equal(tokens.count, "~88% fewer tokens");
+  assert.deepEqual(last.log, ["One lookup used ~88% fewer tokens than reading 3 files (estimate)"]);
+});
+
+test("the count line names learnings and skills apart, and pluralises", async () => {
+  assert.equal(foundLine(0, 0), "Found 0 learnings for your team");
+  assert.equal(foundLine(1, 0), "Found 1 learning for your team");
+  assert.equal(foundLine(3, 0), "Found 3 learnings for your team");
+  assert.equal(foundLine(1, 1), "Found 1 learning and 1 skill for your team");
+  assert.equal(foundLine(2, 3), "Found 2 learnings and 3 skills for your team");
+  assert.equal(foundLine(0, 2), "Found 2 skills for your team");
+
+  freshHome();
+  const dir = repo();
+  const skill = { name: "cut a release", title: "Cut a release", for: "team" as const, steps: ["Run `npm test`", "Run `npm publish`"], sessions: ["a", "b"], quotes: [] };
+  const saved = [{ skill, ...saveFoundSkill(dir, skill) }];
+  const t = okTrail();
+  const run = await PairRun.start(dir, "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.23.1", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  await run.finish(dir, saved);
+  const logs = progressCalls(t).flatMap((c) => (c.body.log as string[] | undefined) ?? []);
+  assert.ok(logs.includes("Found 1 learning and 1 skill for your team"), logs.join(" | "));
 });

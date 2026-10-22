@@ -19,16 +19,18 @@ function pointerFile(pointer: string): string {
 /**
  * Queue one search event for `r`, when it showed a learning or saved tokens.
  * Uses are counted from the learnings shown only; `saved_tokens` rides along.
- * Query and files are sent only with a shown learning. Never throws.
+ * Query and files are sent only with a shown learning. `savedTokens` is the
+ * saving from a pack the caller already rendered (see formatAskWithSaved), so
+ * the lookup isn't rendered a second time. Never throws.
  */
-export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = readCloud()): void {
+export function recordLookup(r: AskResult, repo: string, cloud: Cloud | null = readCloud(), savedTokens?: number): void {
   try {
     // Cheapest checks first: most lookups are on a machine that isn't connected,
     // or in a repo outside the workspace, and must cost nothing here.
     const key = repoPlace(repo).key;
     if (!records(cloud, key)) return;
     const shown = r.notes ?? [];
-    const saved = askSavedTokens(r);
+    const saved = savedTokens ?? askSavedTokens(r);
     if (!shown.length && saved <= 0) return;
     const me = noteAuthor(repo);
     // A lookup that showed no learning leaves with its savings only: the query

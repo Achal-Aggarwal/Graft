@@ -38,6 +38,30 @@ export function renderFoundSkill(s: FoundSkill): string {
   return `---\nname: ${name}\ndescription: ${JSON.stringify(s.title)}\nversion: 1\n---\n\n# ${s.title}\n\n${steps}\n`;
 }
 
+/** The SKILL.md a skill of this name already has, in the repo or on this machine; null when there's none. */
+function existingSkillFile(repo: string, name: string): string | null {
+  const dirs = skillDirs(repo);
+  for (const d of [dirs.repo, dirs.home]) {
+    const there = join(d, name, "SKILL.md");
+    if (existsSync(there)) return there;
+  }
+  return null;
+}
+
+/**
+ * The lines init prints for found skills it didn't write because one of that
+ * name already exists (in the repo or on this machine), one per skill.
+ */
+export function skippedSkillLines(repo: string, found: FoundSkill[], written: SavedSkill[]): string[] {
+  const out: string[] = [];
+  for (const skill of found) {
+    const name = skillName(skill.name);
+    if (!name || written.some((w) => w.skill === skill) || !existingSkillFile(repo, name)) continue;
+    out.push(`· Skipped skill ${name}: one already exists.`);
+  }
+  return out;
+}
+
 /**
  * Write the skill, and return the path of its SKILL.md and whether this call
  * wrote it. A skill of that name the repo or this machine already has is left
@@ -48,10 +72,8 @@ export function saveFoundSkill(repo: string, s: FoundSkill): { path: string; cre
   const name = skillName(s.name);
   if (!name) throw new Error("a skill needs a name");
   const dirs = skillDirs(repo);
-  for (const d of [dirs.repo, dirs.home]) {
-    const there = join(d, name, "SKILL.md");
-    if (existsSync(there)) return { path: there, created: false };
-  }
+  const there = existingSkillFile(repo, name);
+  if (there) return { path: there, created: false };
   if (s.for === "you") ensureRepoHome(repo);
   const dir = join(s.for === "you" ? dirs.home : dirs.repo, name);
   mkdirSync(dir, { recursive: true });

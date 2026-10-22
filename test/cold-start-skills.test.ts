@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PairRun } from "../src/cloud/pair.js";
 import { finishPastRead, findLearnings, saveSkills, type PastSession } from "../src/notes/cold-start.js";
-import { saveFoundSkill, type FoundSkill, type SavedSkill } from "../src/skills/found-skill.js";
+import { saveFoundSkill, skippedSkillLines, type FoundSkill, type SavedSkill } from "../src/skills/found-skill.js";
 import { getSkill, listSkills, skillDirs } from "../src/skills/skills.js";
 import { writeNote } from "../src/notes/notes.js";
 import { tmpRepo } from "./helpers.js";
@@ -248,4 +248,24 @@ test("a team skill named like one the repo already has is not reported as found,
   assert.equal(readFileSync(join(theirs, "SKILL.md"), "utf8"), text);
   const found = await pairFound(dir, [{ skill: COLLIDING, path: join(theirs, "SKILL.md"), created: false }]);
   assert.deepEqual(found.map((f) => f.kind), ["decision"]);
+});
+
+test("a found team skill that collides with an existing one is named in one line, home or repo", () => {
+  const dir = pairRepo("pair-skip-line");
+  const theirs = join(dir, ".claude", "skills", "cut-a-release");
+  mkdirSync(theirs, { recursive: true });
+  writeFileSync(join(theirs, "SKILL.md"), "---\nname: cut-a-release\ndescription: theirs\n---\n\nSteps.\n");
+  const mine = join(skillDirs(dir).home, "my-own-habit");
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(join(mine, "SKILL.md"), "---\nname: my-own-habit\ndescription: mine\n---\n\nSteps.\n");
+  const fresh: FoundSkill = { ...COLLIDING, name: "ship it", title: "Ship it" };
+  const homeOne: FoundSkill = { ...COLLIDING, name: "my own habit", title: "My own habit", for: "you" };
+
+  const written = saveSkills(dir, [COLLIDING, homeOne, fresh]);
+  assert.deepEqual(written.map((w) => w.skill.name), ["ship it"]);
+  assert.deepEqual(skippedSkillLines(dir, [COLLIDING, homeOne, fresh], written), [
+    "· Skipped skill cut-a-release: one already exists.",
+    "· Skipped skill my-own-habit: one already exists.",
+  ]);
+  assert.deepEqual(skippedSkillLines(dir, [fresh], written), [], "a skill this run wrote isn't reported as skipped");
 });

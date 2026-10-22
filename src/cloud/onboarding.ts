@@ -549,6 +549,18 @@ export function teammatesFromGit(
   repo: string,
   opts: { days?: number; now?: number; fetch?: boolean; max?: number; learnings?: Note[] } = {},
 ): TeammateSummary[] {
+  return teammatesChecked(repo, opts) ?? [];
+}
+
+/**
+ * Like {@link teammatesFromGit}, but `undefined` when there was nothing to check
+ * against: no origin remote, no default branch to compare with, or git failed.
+ * An empty list means "checked, none"; a repo without a remote wasn't checked.
+ */
+export function teammatesChecked(
+  repo: string,
+  opts: { days?: number; now?: number; fetch?: boolean; max?: number; learnings?: Note[] } = {},
+): TeammateSummary[] | undefined {
   try {
     const now = opts.now ?? Date.now();
     const days = opts.days ?? 14;
@@ -556,7 +568,7 @@ export function teammatesFromGit(
     const myName = (git(repo, ["config", "user.name"]) ?? "").trim().toLowerCase();
     if (opts.fetch !== false && !process.env.TRAIL_NO_FETCH) fetchQuietly(repo);
     const cache = refreshBranches(repo, { fetch: false, now });
-    if (!cache.base) return [];
+    if (!cache.base) return undefined;
     const mine = new Set(myRecentFiles(repo, me));
     const where = mine.size ? mine : new Set(hottestFiles(repo));
     const out: TeammateSummary[] = [];
@@ -583,7 +595,7 @@ export function teammatesFromGit(
     }
     return out.sort((a, b) => b.pushed_at.localeCompare(a.pushed_at));
   } catch {
-    return [];
+    return undefined;
   }
 }
 

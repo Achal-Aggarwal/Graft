@@ -80,6 +80,13 @@ function foundSkillItem(checkout: string, s: SavedSkill): Record<string, unknown
   ];
 }
 
+/** "Found 3 learnings and 1 skill for your team"; the skills part is left out when there are none. */
+export function foundLine(learnings: number, skills: number): string {
+  const l = `${learnings} learning${learnings === 1 ? "" : "s"}`;
+  const sk = `${skills} skill${skills === 1 ? "" : "s"}`;
+  return `Found ${learnings === 0 && skills > 0 ? sk : skills > 0 ? `${l} and ${sk}` : l} for your team`;
+}
+
 /** The most found learnings one progress call may carry. */
 const FOUND_PER_CALL = 200;
 
@@ -142,6 +149,22 @@ export class PairRun {
     this.send({ phases: this.phases, ...(log ? { log: [log] } : {}) });
   }
 
+  /** The token step's end: the saving is an estimate (the pack against reading the files whole), and the page says so. */
+  tokensDone(tokens: TokensSummary | null): void {
+    this.phase(
+      "tokens",
+      "done",
+      tokens ? `~${tokens.pct}% fewer tokens` : "skipped",
+      tokens ? `One lookup used ~${tokens.pct}% fewer tokens than reading ${tokens.files} file${tokens.files === 1 ? "" : "s"} (estimate)` : undefined,
+    );
+  }
+
+  /** The team step's end: `undefined` teammates means nothing was checked (no origin remote), not "none". */
+  teamDone(teammates: TeammateSummary[] | undefined): void {
+    if (teammates) this.phase("team", "done", `${teammates.length} ${teammates.length === 1 ? "person" : "people"}`);
+    else this.phase("team", "done", "skipped", "No origin remote, so no teammates' branches to check");
+  }
+
   /** Send what init found beyond the learnings; keys left undefined (or a null `tokens`) are left out. */
   findings(f: PairFindings): void {
     const out: Record<string, unknown> = {};
@@ -168,11 +191,13 @@ export class PairRun {
         ]
       : [];
     const n = found.length;
+    const m = found.filter((f) => f.kind === "skill").length;
+    const learned = n - m;
     this.phases = this.phases.map((p) => (p.status === "done" ? p : { ...p, status: "done" as const }));
     this.phases = this.phases.map((p) => (p.id === "learnings" ? { ...p, count: String(n) } : p));
     for (let i = 0; i < Math.max(n, 1); i += FOUND_PER_CALL) {
       const part = found.slice(i, i + FOUND_PER_CALL);
-      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [`Found ${n} learning${n === 1 ? "" : "s"} for your team`] } : {}) });
+      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m)] } : {}) });
     }
     this.send({ done: true });
     return this.flush();

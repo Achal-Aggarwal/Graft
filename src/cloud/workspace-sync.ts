@@ -18,9 +18,9 @@
  * `_trail-sync` child does it.
  */
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { graftCliPath } from "../claude/paths.js";
 import { readBranchCache, refreshBranches } from "../notes/branches.js";
 import { knownRepos, repoName, repoPlace, trailHome } from "../notes/home.js";
@@ -48,13 +48,39 @@ function inside(root: string, p: string): boolean {
   return p === root || p.startsWith(root + sep);
 }
 
+/** A SKILL.md bigger than this is not a skill, and is never sent. */
+const SKILL_MAX_BYTES = 256 * 1024;
+
+/**
+ * Which of `paths` (relative to `root`) git tracks, by what `git ls-files` says,
+ * so a gitignored or untracked file is not among them. Empty when `root` isn't a
+ * git checkout or git fails: no skill goes up then.
+ */
+function trackedAmong(root: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  try {
+    const out = execFileSync("git", ["--literal-pathspecs", "ls-files", "-z", "--", ...paths], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return new Set(out.split("\0").filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * The repo's skills, as the workspace takes them: each `.claude/skills/<name>/SKILL.md`
- * in the working tree. Same item as the one init sends for a skill it just found
- * (the server keeps one per repo and path): the body is SKILL.md without its
- * frontmatter, the hash is of the whole file. A symlinked skill is read only when
- * it resolves inside the checkout. A SKILL.md that can't be read or parsed is
- * skipped. Skills kept in ~/.trail are never sent.
+ * in the working tree that git tracks (an untracked or gitignored one isn't the
+ * team's, so it stays here; no git, no skills). Same item as the one init sends
+ * for a skill it just found (the server keeps one per repo and path): the body is
+ * SKILL.md without its frontmatter, the hash is of the whole file. A symlinked
+ * skill is read only when it resolves inside the checkout, and goes up when the
+ * file it resolves to is tracked. A SKILL.md that can't be read or parsed, or is
+ * over 256 KB, is skipped. Skills kept in ~/.trail are never sent.
  */
 function skillItems(checkout: string): UploadedLearning[] {
   const dir = skillDirs(checkout).repo;
@@ -66,13 +92,27 @@ function skillItems(checkout: string): UploadedLearning[] {
   } catch {
     return [];
   }
-  const out: UploadedLearning[] = [];
+  // Each candidate that passes the cheap checks, with where its file really is.
+  const candidates: Array<{ name: string; file: string; real: string }> = [];
   for (const name of names) {
     if (!SKILL_FOLDER.test(name) || OWN_SKILLS.has(name)) continue;
     try {
       const file = join(dir, name, "SKILL.md");
-      if (!statSync(join(dir, name)).isDirectory() || !statSync(file).isFile()) continue;
-      if (!inside(root, realpathSync(join(dir, name))) || !inside(root, realpathSync(file))) continue;
+      if (!statSync(join(dir, name)).isDirectory()) continue;
+      const st = statSync(file);
+      if (!st.isFile() || st.size > SKILL_MAX_BYTES) continue;
+      const real = realpathSync(file);
+      if (!inside(root, realpathSync(join(dir, name))) || !inside(root, real)) continue;
+      candidates.push({ name, file, real: relative(root, real).split(sep).join("/") });
+    } catch {
+      /* no SKILL.md here */
+    }
+  }
+  const tracked = trackedAmong(root, [...new Set(candidates.map((c) => c.real))]);
+  const out: UploadedLearning[] = [];
+  for (const { name, file, real } of candidates) {
+    if (!tracked.has(real)) continue;
+    try {
       const text = readFileSync(file, "utf8");
       const parsed = matter(text);
       const d = parsed.data as Record<string, unknown>;
@@ -89,7 +129,7 @@ function skillItems(checkout: string): UploadedLearning[] {
         hash: sha256(text),
       });
     } catch {
-      /* no SKILL.md, or one that can't be read or parsed */
+      /* a SKILL.md that can't be read or parsed */
     }
   }
   return out;

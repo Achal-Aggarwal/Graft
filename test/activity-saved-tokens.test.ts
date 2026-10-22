@@ -14,7 +14,7 @@ process.env.DO_NOT_TRACK = "1";
 process.env[BRAND_ENV] = "trail";
 process.env.TRAIL_HOME = mkdtempSync(join(tmpdir(), "saved-tokens-home-"));
 
-const { formatAsk, askSavedTokens } = await import("../src/ask/ask.js");
+const { formatAsk, formatAskWithSaved, askSavedTokens } = await import("../src/ask/ask.js");
 type AskResult = import("../src/ask/ask.js").AskResult;
 const { recordLookup } = await import("../src/cloud/lookup-activity.js");
 const { repoPlace } = await import("../src/notes/home.js");
@@ -143,4 +143,20 @@ test("a repo outside the workspace records nothing", () => {
   recordLookup(r, repo, { ...cloud, repos: ["github.com/acme/other"] });
   assert.equal(c.reads(), 0);
   assert.equal(queued().length, 0);
+});
+
+test("a lookup is rendered once: the saving comes from the pack already rendered", () => {
+  reset();
+  const { repo, cloud } = repoAndCloud();
+  const r = resultSaving(15392);
+  const expected = { text: formatAsk(r), saved: askSavedTokens(r) };
+  const c = countingReads(r);
+  const { text, savedTokens } = formatAskWithSaved(r);
+  assert.equal(text, expected.text, "same text formatAsk gives");
+  assert.equal(savedTokens, expected.saved);
+  const renders = c.reads();
+  assert.ok(renders > 0);
+  recordLookup(r, repo, cloud, savedTokens);
+  assert.equal(c.reads(), renders, "recording it renders nothing more");
+  assert.equal(queued()[0].saved_tokens, 15392);
 });

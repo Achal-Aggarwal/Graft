@@ -60,7 +60,7 @@ import { listSessionIds, readSession, sessionDir } from "./claude/state.js";
 import { costLabel, listNotes, noteName, notePlace, noteTargets, readingTokens, savedByNote, commitLines, PERSONAL_SAVED_LINE, PR_SPEEDUP, SECTIONS, tokensWorthSaying, sectionLead, shortDate, tokensLabel, writeNote, type Note, mentionedFiles } from "./notes/notes.js";
 import { aboutTerms, currentSessionCost } from "./notes/session-cost.js";
 import { beginPastRead, finishPastRead, type Finding } from "./notes/cold-start.js";
-import type { SavedSkill } from "./skills/found-skill.js";
+import { skippedSkillLines, type SavedSkill } from "./skills/found-skill.js";
 import { beginReviewRead, finishReviewRead, type ReviewFinding } from "./notes/pr-reviews.js";
 import { finishPair, PairRun, validPairCode } from "./cloud/pair.js";
 import { currentBranch, noteAuthor, teammatesOn } from "./notes/git-facts.js";
@@ -77,6 +77,7 @@ import {
   normalizeCode,
   OnboardingReporter,
   repoRef,
+  teammatesChecked,
   teammatesFromGit,
   tokensOnOneLookup,
 } from "./cloud/onboarding.js";
@@ -1700,7 +1701,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     if (pair) {
       pair.phase("tokens", "running", "", "Measuring one lookup against reading the files");
       tokens = tokensOnOneLookup(repo, { contextDir: program.opts<GlobalOpts>().dir });
-      pair.phase("tokens", "done", tokens ? `${tokens.pct}% fewer` : "skipped", tokens ? `One lookup used ${tokens.pct}% fewer tokens than reading ${tokens.files} file${tokens.files === 1 ? "" : "s"}` : undefined);
+      pair.tokensDone(tokens);
     }
 
     if (!verbose) {
@@ -1754,6 +1755,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
           console.error(`✓ wrote a skill from a procedure you walked Claude through more than once: ${skill.title}`);
           console.error(`    ${skill.for === "team" ? "for your team" : "just for you "} · ${path}`);
         }
+        if (!cancelled) for (const line of skippedSkillLines(repo, result.skills, skills)) console.error(line);
         saved.forEach((note, i) => learnedFrom.push({ note, sessions: kept[i]?.sessions.length }));
         const offered = result.findings.length;
         if (saved.length) {
@@ -1866,8 +1868,10 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       // exists before the page is told the read is done.
       pair.phase("team", "running", "", "Checking your team's branches");
       const teamNotes = listNotes(repo, { branches: false }).filter((n) => n.scope === "repo" && !n.ref);
-      const teammates = teammatesFromGit(repo, { learnings: teamNotes });
-      pair.phase("team", "done", `${teammates.length} ${teammates.length === 1 ? "person" : "people"}`);
+      // No remote (or no default branch) means nothing was checked: `teammates`
+      // is left out, since an empty list would say "checked, none".
+      const teammates = teammatesChecked(repo, { learnings: teamNotes });
+      pair.teamDone(teammates);
       pair.findings({ tokens, sessions: pastRead?.sessions, teammates });
       await pair.finish(repo, skillsWritten);
       pair.handOff(repo);

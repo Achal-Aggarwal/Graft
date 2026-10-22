@@ -1527,10 +1527,15 @@ function renderAsk(r: AskResult): { body: string } | { text: string } {
 
 /** Render an {@link AskResult} as a compact markdown context pack. */
 export function formatAsk(r: AskResult): string {
+  return formatAskWithSaved(r).text;
+}
+
+/** {@link formatAsk}, plus the tokens its pack saved (what {@link askSavedTokens} says), from the one render. */
+export function formatAskWithSaved(r: AskResult): { text: string; savedTokens: number } {
   const out = renderAsk(r);
-  if ("text" in out) return out.text;
+  if ("text" in out) return { text: out.text, savedTokens: 0 };
   const savings = askSavingsLine(r, out.body);
-  return (savings ? `${savings}\n\n${out.body}` : out.body) + escalationNudge(r) + "\n";
+  return { text: (savings ? `${savings}\n\n${out.body}` : out.body) + escalationNudge(r) + "\n", savedTokens: savedTokens(r, out.body) };
 }
 
 /** Tokens this lookup's pack saved against reading the files it covers whole:
