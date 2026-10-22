@@ -1,8 +1,9 @@
 /**
- * The first-run read of PR reviews: which comments count as a reviewer's,
- * that a finding survives only when the comments it quotes are on two or more
- * PRs, and that `trail init` reads them with `gh` when it can and stays quiet
- * when it can't.
+ * The first-run read of PR reviews: which comments count (a reviewer's,
+ * inline, on a thread the author acted on), that a finding survives only when
+ * the comment it quotes is really there and it names the code it's about, and
+ * that `trail init` reads them with `gh` when it can and stays quiet when it
+ * can't.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { finishReviewRead, ghReady, reviewDigest, reviewedPRs, reviewWords, verifyReviews, type ReviewedPR, type ReviewFinding, type ReviewResult } from "../src/notes/pr-reviews.js";
+import { anchoredReviews, codeWords, commentedCode, finishReviewRead, ghReady, reviewDigest, reviewedPRs, reviewWords, verifyReviews, type ReviewedPR, type ReviewFinding, type ReviewResult } from "../src/notes/pr-reviews.js";
 import { ensureRepoHome } from "../src/notes/home.js";
 import { parseNote } from "../src/notes/notes.js";
 import { claudeProjectDir } from "../src/notes/session-cost.js";
@@ -18,6 +19,8 @@ import { tmpRepo } from "./helpers.js";
 
 const human = (login: string) => ({ login, __typename: "User" });
 const bot = { login: "coderabbitai", __typename: "Bot" };
+
+const HUNK = "@@ -10,6 +10,8 @@ export async function orders(req) {\n   const rows = await db.query(sql);\n+  // TODO\n   return rows;";
 
 /** GitHub's GraphQL answer for four merged PRs, one reviewed only by a bot. */
 const GITHUB = {
@@ -32,7 +35,7 @@ const GITHUB = {
             author: { login: "bob" },
             reviews: { nodes: [{ body: "", author: human("alice") }] },
             reviewThreads: {
-              nodes: [{ comments: { nodes: [{ body: "Same again: handlers in src/api must return a 500 when db.query fails.", path: "src/api/users.ts", author: human("alice") }] } }],
+              nodes: [{ isOutdated: true, comments: { nodes: [{ body: "Same again: handlers in src/api must return a 500 when db.query fails.", path: "src/api/users.ts", author: human("alice") }] } }],
             },
           },
           {
@@ -44,14 +47,17 @@ const GITHUB = {
             reviewThreads: {
               nodes: [
                 {
+                  isOutdated: true,
                   comments: {
                     nodes: [
-                      { body: "This handler swallows the error from db.query, log it and return a 500.", path: "src/api/orders.ts", author: human("alice") },
+                      { body: "This handler swallows the error from db.query, log it and return a 500.", path: "src/api/orders.ts", diffHunk: HUNK, author: human("alice") },
                       { body: "> This handler swallows the error\n\ndone, thanks", path: "src/api/orders.ts", author: human("bob") },
                     ],
                   },
                 },
-                { comments: { nodes: [{ body: "Consider adding tests for this endpoint.", path: "src/api/orders.ts", author: bot }] } },
+                { isResolved: true, comments: { nodes: [{ body: "Consider adding tests for this endpoint.", path: "src/api/orders.ts", author: bot }] } },
+                // Nobody acted on it: not a rule.
+                { isOutdated: false, isResolved: false, comments: { nodes: [{ body: "Nit: maybe rename rows to orders?", path: "src/api/orders.ts", author: human("alice") }] } },
               ],
             },
           },
@@ -60,8 +66,10 @@ const GITHUB = {
             title: "Fixture refresh",
             mergedAt: "2026-09-30T09:00:00Z",
             author: { login: "carol" },
-            reviews: { nodes: [{ body: "The fixture has token: ghp_abcdefghijklmnopqrstuvwxyz1234 in it, please add a changelog entry too.", author: human("dan") }] },
-            reviewThreads: { nodes: [] },
+            reviews: { nodes: [{ body: "Thanks!", author: human("dan") }] },
+            reviewThreads: {
+              nodes: [{ isResolved: true, comments: { nodes: [{ body: "The fixture has token: ghp_abcdefghijklmnopqrstuvwxyz1234 in it, please add a changelog entry too.", path: "CHANGELOG.md", author: human("dan") }] } }],
+            },
           },
           {
             number: 30,
@@ -77,15 +85,15 @@ const GITHUB = {
   },
 };
 
-test("only reviewers' words count: bots, the PR's author and quoted replies are dropped, and secrets scrubbed", () => {
+test("only reviewers' inline words on acted-on threads count: summaries, ignored threads, bots, the PR's author and quoted replies are dropped, and secrets scrubbed", () => {
   const { merged, prs } = reviewedPRs(GITHUB);
   assert.equal(merged, 4);
   assert.deepEqual(prs.map((p) => p.number), [41, 38, 35], "newest merged first, the bot-only PR left out");
   const orders = prs[0]!;
   assert.deepEqual(orders.comments, [
-    { text: "Looks good once the error handling is in." },
-    { path: "src/api/orders.ts", text: "This handler swallows the error from db.query, log it and return a 500." },
+    { path: "src/api/orders.ts", text: "This handler swallows the error from db.query, log it and return a 500.", code: "const rows = await db.query(sql);\n+  // TODO\n   return rows;" },
   ]);
+  assert.equal(commentedCode("@@ -1 +1 @@\n"), undefined);
   assert.ok(!prs[2]!.comments[0]!.text.includes("ghp_"));
   assert.equal(reviewWords("> quoted\n\n![shot](https://x/y.png) see this"), "[image] see this");
   assert.equal(reviewWords("<!-- only a marker -->"), null);
@@ -95,16 +103,16 @@ test("only reviewers' words count: bots, the PR's author and quoted replies are 
 
 test("the digest heads each PR with its number and stops at its size", () => {
   const prs: ReviewedPR[] = [
-    { number: 9, title: "New", at: "2026-10-09T00:00:00Z", comments: [{ path: "a.ts", text: "x".repeat(50) }] },
-    { number: 8, title: "Old", at: "2026-09-01T00:00:00Z", comments: [{ text: "y".repeat(50) }] },
+    { number: 9, title: "New", at: "2026-10-09T00:00:00Z", comments: [{ path: "a.ts", text: "x".repeat(50), code: "return a;" }] },
+    { number: 8, title: "Old", at: "2026-09-01T00:00:00Z", comments: [{ path: "b.ts", text: "y".repeat(50) }] },
   ];
   const all = reviewDigest(prs);
-  assert.match(all.text, /^=== PR #9 · 2026-10-09 · New ===\n\[review on a\.ts\] x+\n\n=== PR #8 · 2026-09-01 · Old ===\n\[review\] y+$/);
-  const small = reviewDigest(prs, 90);
+  assert.match(all.text, /^=== PR #9 · 2026-10-09 · New ===\n\[code in a\.ts\]\nreturn a;\n\[review on a\.ts\] x+\n\n=== PR #8 · 2026-09-01 · Old ===\n\[review on b\.ts\] y+$/);
+  const small = reviewDigest(prs, 110);
   assert.deepEqual(small.read.map((p) => p.number), [9]);
 });
 
-test("a review finding is kept only when its quotes are on two PRs, and trail counts them", () => {
+test("a review finding is kept when its quotes are really in an acted-on comment, one PR is enough, and trail counts them", () => {
   const { prs } = reviewedPRs(GITHUB);
   const out = verifyReviews(
     [
@@ -122,10 +130,11 @@ test("a review finding is kept only when its quotes are on two PRs, and trail co
     ],
     prs,
   );
-  assert.equal(out.length, 1);
-  assert.equal(out[0]!.title, "Return a 500 when db.query fails in src/api");
+  assert.deepEqual(out.map((f) => f.title), ["Return a 500 when db.query fails in src/api", "Changelog"], "newest first; the made-up one is gone");
   assert.deepEqual(out[0]!.prs, [41, 38]);
   assert.equal(out[0]!.last, "2026-10-10");
+  assert.deepEqual(out[0]!.paths, ["src/api/orders.ts", "src/api/users.ts"], "the files the quoted inline comments are on");
+  assert.deepEqual(out[1]!.prs, [35], "one acted-on thread is enough");
 });
 
 /* ---- trail init, end to end, with stand-ins for Claude Code and gh on PATH ---- */
@@ -199,7 +208,7 @@ if (process.argv.includes("--version")) { console.log("9.9.9"); process.exit(0);
 let input = "";
 process.stdin.on("data", (b) => (input += b));
 process.stdin.on("end", () => {
-  const review = input.startsWith("Review comments");
+  const review = input.startsWith("Inline review comments");
   fs.writeFileSync(${JSON.stringify(log)} + (review ? "/reviews.txt" : "/sessions.txt"), input);
   const out = review ? ${JSON.stringify(reviews)} : ${JSON.stringify(sessions)};
   console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.01, structured_output: out }));
@@ -247,31 +256,36 @@ const reviewLearnings = (repo: string) =>
   readdirSync(join(repo, ".trail", "learnings"))
     .filter((f) => f.endsWith(".md"))
     .map((f) => parseNote(readFileSync(join(repo, ".trail", "learnings", f), "utf8"), f)!)
-    .filter((n) => /Flagged in review/.test(n.body));
+    .filter((n) => /From review on/.test(n.body));
 
 // The stand-ins are shebang scripts, which Windows won't run as `claude` or `gh`.
-test("trail init learns what reviewers flagged on two PRs, beside the session learnings, once per repo", { skip: process.platform === "win32" }, () => {
+test("trail init learns what reviewers made authors change, beside the session learnings, once per repo", { skip: process.platform === "win32" }, () => {
   const home = mkdtempSync(join(tmpdir(), "reviews-init-home-"));
   const repo = githubRepo("reviews-init");
+  // The code the reviews were about: a finding tied to no code that exists isn't the team's.
+  mkdirSync(join(repo, "src", "api"), { recursive: true });
+  writeFileSync(join(repo, "src", "api", "orders.ts"), "export const orders = 1;\n");
   pastSessions(repo, home);
   const { bin, log } = fakeTools(true);
 
   const first = initRun(repo, home, bin);
   assert.equal(first.status, 0, first.err);
   assert.match(first.err, /· reading review comments on this repo's merged PRs for what reviewers keep flagging/);
-  assert.match(first.err, /✓ learned 1 thing you told Claude more than once, from your last 2 sessions here\n {4}for your team · told Claude in 2 sessions: Run go test with -race before pushing\n/);
-  assert.match(first.err, /✓ learned 1 thing reviewers flagged on more than one PR, from the last 4 merged PRs here\n {4}for your team · flagged in review on 2 PRs: Return a 500 when db\.query fails in src\/api\n· Claude follows them from your next session\n🌱 Commit what you learned/);
+  assert.match(first.err, /✓ learned 1 thing reviewers made authors change, from the last 4 merged PRs here\n {4}for your team · from review on #41, #38: Return a 500 when db\.query fails in src\/api\n/);
+  assert.match(first.err, /✓ learned 1 thing you told Claude more than once, from your last 2 sessions here, just for you\n {4}just for you  · told Claude in 2 sessions: Run go test with -race before pushing\n· Claude follows them from your next session\n🌱 Commit what you learned/);
+  assert.match(first.err, /→ 1 team learning in \.trail\/learnings\/ isn't committed yet\. Ask the user: "Commit it so your teammates' Claude starts from it\? \(yes \/ no\)"/, "run without a terminal, init ends by telling the agent to ask");
   assert.equal(first.err.match(/Claude follows them/g)?.length, 1, "one closing line for both");
 
   const [learning] = reviewLearnings(repo);
   assert.ok(learning);
   assert.equal(learning.standing, true);
-  assert.match(learning.body, /_Flagged in review on 2 PRs here \(#41, #38\), most recently on Oct 10\._/);
+  assert.deepEqual(learning.touches, ["src/api/orders.ts"], "the file the quoted comment was on");
+  assert.match(learning.body, /_From review on #41, #38 here, merged Oct 10\._/);
 
   // What Claude was sent: reviewers' comments, scrubbed, with no names, bots or author replies.
   const sent = readFileSync(join(log, "reviews.txt"), "utf8");
-  assert.match(sent, /=== PR #41 · 2026-10-10 · Orders endpoint ===\n\[review\] Looks good once the error handling is in\.\n\[review on src\/api\/orders\.ts\] This handler swallows/);
-  for (const absent of ["ghp_", "alice", "bob", "done, thanks", "Consider adding tests", "PR #30"]) assert.ok(!sent.includes(absent), `sent ${absent}`);
+  assert.match(sent, /=== PR #41 · 2026-10-10 · Orders endpoint ===\n\[code in src\/api\/orders\.ts\]\nconst rows = await db\.query\(sql\);[\s\S]*?\n\[review on src\/api\/orders\.ts\] This handler swallows/);
+  for (const absent of ["ghp_", "alice", "bob", "done, thanks", "Consider adding tests", "Looks good once", "Nit: maybe rename", "PR #30"]) assert.ok(!sent.includes(absent), `sent ${absent}`);
 
   const again = initRun(repo, home, bin);
   assert.equal(again.status, 0, again.err);
@@ -310,8 +324,17 @@ test("gh isn't asked at all without a GitHub remote, and a missing gh means no r
 
 /* ---- ticking which review learnings to keep ---- */
 
-function flagged(title: string): ReviewFinding {
-  return { title, body: "## Decided\n- " + title + ".", prs: [41, 38], last: "2026-10-10", quotes: [] };
+function flagged(title: string, paths: string[] = ["src/api/users.ts"]): ReviewFinding {
+  return { title, body: `## Decided\n- ${title}${paths[0] ? `, in ${paths[0]}` : ""}.`, prs: [41, 38], last: "2026-10-10", quotes: [], paths };
+}
+
+/** A repo with the files the review findings are about. */
+function reviewedRepo(name: string): string {
+  const repo = tmpRepo(name);
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  mkdirSync(join(repo, "src", "api"), { recursive: true });
+  writeFileSync(join(repo, "src", "api", "users.ts"), "export const users = 1;\n");
+  return repo;
 }
 
 function reviewReadWith(findings: ReviewFinding[]) {
@@ -333,23 +356,53 @@ async function withTrailHome(name: string, run: () => Promise<void>): Promise<vo
 
 test("init saves only the review learnings the person kept, and remembers the reviews were read", () =>
   withTrailHome("review-keep-home-", async () => {
-    const repo = tmpRepo("review-keep-some");
-    spawnSync("git", ["init", "-q"], { cwd: repo });
+    const repo = reviewedRepo("review-keep-some");
     const all = [flagged("Return a 500 when db.query fails"), flagged("Add a changelog entry"), flagged("Name migrations by date")];
     const { saved, kept, cancelled } = await finishReviewRead(repo, reviewReadWith(all), async (f) => [f[0]!, f[2]!]);
     assert.equal(cancelled, false);
     assert.deepEqual(kept.map((f) => f.title), ["Return a 500 when db.query fails", "Name migrations by date"]);
     assert.deepEqual(saved.map((n) => [n.title, n.scope]), [["Return a 500 when db.query fails", "repo"], ["Name migrations by date", "repo"]]);
+    assert.deepEqual(saved[0]!.touches, ["src/api/users.ts"], "touches the file the review was on, so Claude gets it when it opens that file");
     assert.ok(existsSync(join(ensureRepoHome(repo).place.dir, "pr-reviews.json")), "read once per repo");
   }));
 
 test("cancelling the pick saves no review learning, and the next init asks again", () =>
   withTrailHome("review-keep-none-home-", async () => {
-    const repo = tmpRepo("review-keep-cancel");
-    spawnSync("git", ["init", "-q"], { cwd: repo });
+    const repo = reviewedRepo("review-keep-cancel");
     const { saved, cancelled } = await finishReviewRead(repo, reviewReadWith([flagged("Add a changelog entry")]), async () => null);
     assert.equal(cancelled, true);
     assert.equal(saved.length, 0);
     assert.equal(existsSync(join(repo, ".trail", "learnings")) && readdirSync(join(repo, ".trail", "learnings")).some((f) => f.endsWith(".md")), false);
     assert.equal(existsSync(join(ensureRepoHome(repo).place.dir, "pr-reviews.json")), false, "not marked read");
+  }));
+
+test("a review finding that names no code that exists, or that CLAUDE.md already says, isn't offered", () =>
+  withTrailHome("review-anchor-home-", async () => {
+    const repo = reviewedRepo("review-anchor");
+    writeFileSync(join(repo, "CLAUDE.md"), "# Rules\n\n- Every handler in src/api returns a 500 when the database query fails, and logs the error.\n");
+    const out = anchoredReviews(repo, [
+      flagged("Comments must match the code", []),
+      flagged("Return a 500 when the database query fails in every handler", ["src/api/users.ts"]),
+      flagged("Validate the page size in listUsers", ["src/api/gone.ts", "src/api/users.ts"]),
+    ]);
+    assert.deepEqual(out.map((f) => f.title), ["Validate the page size in listUsers"]);
+    assert.deepEqual(out[0]!.touches, ["src/api/users.ts"], "only files that still exist");
+    const { result, saved } = await finishReviewRead(repo, reviewReadWith([flagged("Comments must match the code", [])]));
+    assert.equal(saved.length, 0);
+    assert.equal(result.findings.length, 1);
+    assert.ok(existsSync(join(ensureRepoHome(repo).place.dir, "pr-reviews.json")), "still read once: the same reviews would give the same answer");
+  }));
+
+test("a finding that never names the code it's on is generic advice, and the files the team edits now come first", () =>
+  withTrailHome("review-generic-home-", async () => {
+    const repo = reviewedRepo("review-generic");
+    writeFileSync(join(repo, "src", "api", "orders.ts"), "export const orders = 1;\n");
+    spawnSync("git", ["add", "-A"], { cwd: repo });
+    spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a"], { cwd: repo });
+    writeFileSync(join(repo, "src", "api", "orders.ts"), "export const orders = 2;\n");
+    spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "b"], { cwd: repo });
+    const generic: ReviewFinding = { title: "Keep comments true to what the code does", body: "## Decided\n- Check a comment's claims against the code.", prs: [41], last: "2026-10-10", quotes: [], paths: ["src/api/users.ts"] };
+    const out = anchoredReviews(repo, [flagged("Page size is capped at 100 in listUsers"), generic, flagged("Return 409 only on a stale version in orders", ["src/api/orders.ts"])]);
+    assert.deepEqual(out.map((f) => f.title), ["Return 409 only on a stale version in orders", "Page size is capped at 100 in listUsers"], "the generic one is gone; orders.ts was edited twice lately, users.ts once");
+    assert.deepEqual(codeWords(["backend/internal/services/agent_hook_targets.go#Service.ValidateAgentHookTargets", "src/index.ts"]), ["agent_hook_targets", "services", "service", "validateagenthooktargets"]);
   }));

@@ -70,9 +70,10 @@ export interface SessionState {
    * are sampled on different turns: the tally only on graft turns, the cost on
    * every one. */
   lastBillingUuid?: string;
-  /** Set once the Stop hook has asked the agent to leave a note this session,
-   * so it asks at most once (see `turnWantsNote`). */
-  noteAsked?: boolean;
+  /** The signs the Stop hook has asked the agent to save a learning about
+   * this session (note-signals.ts keys), so each is asked about once and a
+   * session at most NOTE_ASKS_PER_SESSION times. */
+  noteAsks?: string[];
   /** Set once this session has been rolled up into a `session_summary`
    * telemetry event, so a resumed or long-lived session is counted once.
    * A flag rather than deleting the file: the file still holds `lastQuery` and
