@@ -127,7 +127,13 @@ export function needsRefresh(cache: UpdateCache | null, now = Date.now()): boole
  * Only called from long-lived or already-slow contexts (a CLI command, MCP
  * boot) — never from a hook, which reads the cache and nothing else.
  */
-export function maybeRefreshInBackground(home?: string, now = Date.now()): boolean {
+export function maybeRefreshInBackground(
+  home?: string,
+  now = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const doNotTrack = env.DO_NOT_TRACK;
+  if (doNotTrack !== undefined && doNotTrack !== '' && doNotTrack !== '0') return false;
   const cache = readUpdateCache(home);
   if (!needsRefresh(cache, now)) return false;
   writeUpdateCache({ latest: cache?.latest ?? null, checkedAt: now }, home);

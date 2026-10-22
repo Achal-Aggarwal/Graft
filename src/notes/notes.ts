@@ -57,6 +57,10 @@ export interface Note extends LearningFields {
    * task: what the user kept having to tell Claude. The session-start hook
    * lists these up front, since no single task would bring them up. */
   standing?: boolean;
+  /** The file name of an earlier learning this one takes over from. The old
+   * file stays, as the record of what that session knew, but `listNotes`
+   * reads this one instead. */
+  replaces?: string;
   /** Found on a teammate's pushed branch (`origin/kumar/jitter`) rather than in
    * this checkout. `path` is then `<ref>:.trail/learnings/<name>`, readable
    * with `git show`, and the whole body travels with the note. */
