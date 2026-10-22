@@ -27,6 +27,7 @@ import {
   type PickerKey,
   keptLearnings,
   learningsPickerState,
+  learningsTitle,
   displayWidth,
   drivePicker,
   renderedRows,
@@ -200,17 +201,17 @@ test('renderPicker marks the cursor and folds undetected hosts into one line', (
   const state = initialPickerState(planInit(repo, { home }), repo, home);
   const text = renderPicker(state, false);
   assert.match(text, /^graft init — pick the agents your team uses:/);
-  assert.match(text, /› \[x\] claude/);
+  assert.match(text, /› \[✓\] claude/);
   assert.doesNotMatch(text, /\[ \] cursor/, 'an agent graft cannot find is folded away');
   assert.match(text, /\+ \d+ not detected \(.*cursor.*\) · m to show/);
   assert.match(text, /space toggle · a all · m more · enter confirm/);
   // Only the detected rows get a checkbox until `m`.
-  assert.equal(text.split('\n').filter((l) => /\[[ x]\]/.test(l)).length, visibleRows(state).length);
+  assert.equal(text.split('\n').filter((l) => /\[[ ✓]\]/.test(l)).length, visibleRows(state).length);
 
   const opened = reducePicker(state, 'more');
   const all = renderPicker(opened, false);
   assert.match(all, /\[ \] cursor \(not detected\)/);
-  assert.equal(all.split('\n').filter((l) => /\[[ x]\]/.test(l)).length, state.rows.length);
+  assert.equal(all.split('\n').filter((l) => /\[[ ✓]\]/.test(l)).length, state.rows.length);
 });
 
 test('a never selects an agent that is folded away', () => {
@@ -340,37 +341,34 @@ test('a (toggle all) is about agents and leaves the consent answer alone', () =>
 test('the rendered row shows the label, a rule, and what is not collected', () => {
   const repo = fresh(); const home = fullHome();
   const out = renderPicker(initialPickerState(planInit(repo, { home }), repo, home, { offerTelemetry: true }), false);
-  assert.match(out, /\[x\] anonymous usage stats/);
+  assert.match(out, /\[✓\] anonymous usage stats/);
   assert.match(out, /no code, no file paths, no queries/);
   assert.equal(out.includes(TELEMETRY_ROW_ID), false, 'the internal id must never be shown');
   assert.match(out, /─/, 'a rule separates the settings from the agents');
 });
 
-test('the learnings picker starts with every learning ticked, and enter keeps the ticked ones in order', () => {
+test("the learnings picker ticks the team's learnings, leaves the person's own unticked, and enter keeps the ticked ones in order", () => {
   let state = learningsPickerState([
-    { title: 'Use pnpm, not npm', forTeam: true, sessions: 6 },
+    { title: 'Return a 500 when db.query fails', forTeam: true, prs: [41, 38] },
     { title: 'Say what you understood first', forTeam: false, sessions: 4 },
-    { title: 'Run go test with -race', forTeam: true, sessions: 2 },
+    { title: 'Run go test with -race', forTeam: true, memory: true },
   ]);
-  assert.deepEqual(keptLearnings(state), [0, 1, 2]);
-  const shown = renderPicker(state, false, { title: 'keep:' });
-  assert.match(shown, /\[x\] Use pnpm, not npm\s+for your team · told Claude in 6 sessions/);
-  assert.match(shown, /\[x\] Say what you understood first\s+just for you · told Claude in 4 sessions/);
-  state = reducePicker(reducePicker(state, 'down'), 'space');
   assert.deepEqual(keptLearnings(state), [0, 2]);
-  state = reducePicker(state, 'all');
-  assert.deepEqual(keptLearnings(state), [0, 1, 2], 'a ticks every one back');
+  const shown = renderPicker(state, false, { title: 'keep:' });
+  assert.match(shown, /\[✓\] Return a 500 when db\.query fails\s+for your team · from review on PR #41, #38/);
+  assert.match(shown, /\[ \] Say what you understood first\s+just for you · told Claude in 4 sessions/);
+  assert.match(shown, /\[✓\] Run go test with -race\s+for your team · from your Claude's memory of this repo/);
+  state = reducePicker(reducePicker(state, 'down'), 'space');
+  assert.deepEqual(keptLearnings(state), [0, 1, 2]);
+  state = reducePicker(state, 'space');
+  assert.deepEqual(keptLearnings(state), [0, 2]);
 });
 
-test('a learning from PR reviews says how many PRs flagged it, in the same list as the session ones', () => {
-  const state = learningsPickerState([
-    { title: 'Use pnpm, not npm', forTeam: true, sessions: 6 },
-    { title: 'Return a 500 when db.query fails', forTeam: true, prs: 3 },
-  ]);
-  assert.deepEqual(keptLearnings(state), [0, 1]);
-  const shown = renderPicker(state, false, { title: 'keep:' });
-  assert.match(shown, /\[x\] Use pnpm, not npm\s+for your team · told Claude in 6 sessions/);
-  assert.match(shown, /\[x\] Return a 500 when db\.query fails\s+for your team · flagged in review on 3 PRs/);
+test("the picker's title says the team's learnings are new to teammates, or that the list is the person's own", () => {
+  assert.match(learningsTitle([{ title: 'a', forTeam: true, prs: [1, 2] }, { title: 'b', forTeam: false, sessions: 2 }]), /your teammates' Claude doesn't know these yet/);
+  assert.match(learningsTitle([{ title: 'b', forTeam: false, sessions: 2 }]), /you told Claude these more than once/);
+  const many = renderPicker(learningsPickerState([{ title: 'a', forTeam: true, prs: [9, 8, 7, 6, 5] }]), false, { title: null });
+  assert.match(many, /from review on PR #9, #8, #7 \+2/);
 });
 
 /**

@@ -242,20 +242,20 @@ test("trail init reads past sessions by itself and saves what came up twice, onc
   const first = initRun(repo, home, bin);
   assert.equal(first.status, 0, first.err);
   assert.match(first.err, /· reading your 2 past Claude sessions here/);
-  assert.match(first.err, /✓ learned 2 things you told Claude more than once, from your last 2 sessions here/);
-  assert.match(first.err, /for your team · told Claude in 2 sessions: Run go test with -race before pushing/);
+  assert.match(first.err, /✓ learned 2 things you told Claude more than once, from your last 2 sessions here, just for you/);
+  assert.match(first.err, /just for you  · told Claude in 2 sessions: Run go test with -race before pushing/);
   assert.match(first.err, /just for you  · told Claude in 2 sessions: Say what you understood before building/);
-  assert.match(first.err, /· Claude follows them from your next session\n🌱 Commit what you learned and your teammates' agents get to a PR 3x faster/);
+  assert.match(first.err, /· Claude follows them from your next session\n/);
+  assert.doesNotMatch(first.err, /🌱 Commit what you learned/, "nothing for the team to commit: what someone kept telling Claude is theirs");
+  assert.equal(existsSync(join(repo, ".trail", "learnings")) && readdirSync(join(repo, ".trail", "learnings")).some((f) => f.endsWith(".md")), false);
 
-  const [file] = readdirSync(join(repo, ".trail", "learnings")).filter((f) => f.endsWith(".md"));
-  const team = parseNote(readFileSync(join(repo, ".trail", "learnings", file!), "utf8"), file!)!;
-  assert.equal(team.standing, true);
-  assert.match(team.body, /Told to Claude in 2 past sessions here/);
-
-  // The session-start directive lists both, the user's own first.
+  // Both are the person's standing learnings, and the session-start directive lists them.
   process.env.TRAIL_HOME = join(home, ".trail");
-  const directive = standingDirective(standingLearnings(repo));
-  assert.ok(directive.indexOf("Say what you understood") < directive.indexOf("Run go test with -race"));
+  const standing = standingLearnings(repo);
+  assert.deepEqual(standing.map((n) => n.scope).sort(), ["personal", "personal"]);
+  assert.match(standing[0]!.body, /Told to Claude in 2 past sessions here/);
+  const directive = standingDirective(standing);
+  assert.ok(directive.includes("Say what you understood") && directive.includes("Run go test with -race"));
 
   const again = initRun(repo, home, bin);
   assert.equal(again.status, 0, again.err);
@@ -325,8 +325,8 @@ test("init saves only the learnings the person kept, and remembers the repo was 
     const { saved, kept, cancelled } = await finishPastRead(repo, readWith(all), async (f) => [f[0]!, f[2]!]);
     assert.equal(cancelled, false);
     assert.deepEqual(kept.map((f) => f.title), ["Use pnpm, not npm", "Run go test with -race"]);
-    assert.deepEqual(saved.map((n) => n.title), ["Use pnpm, not npm", "Run go test with -race"]);
-    assert.equal(readdirSync(join(repo, ".trail", "learnings")).filter((f) => f.endsWith(".md")).length, 2);
+    assert.deepEqual(saved.map((n) => [n.title, n.scope]), [["Use pnpm, not npm", "personal"], ["Run go test with -race", "personal"]], "what someone kept telling their Claude stays theirs");
+    assert.equal(existsSync(join(repo, ".trail", "learnings")) && readdirSync(join(repo, ".trail", "learnings")).some((f) => f.endsWith(".md")), false);
     assert.ok(existsSync(join(ensureRepoHome(repo).place.dir, "past-sessions.json")), "read once per repo");
   } finally {
     process.env.TRAIL_HOME = env.TRAIL_HOME;
