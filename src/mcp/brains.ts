@@ -150,7 +150,7 @@ export class BrainProxy {
     });
     const text = await res.text();
     if (notify) return null;
-    if (res.status === 401 || res.status === 403) throw new Error('your Trail workspace token was not accepted; run `trail init --connect <code>` with a new code from app.trailhq.com');
+    if (res.status === 401 || res.status === 403) throw new Error('your Trail workspace token was not accepted; run `trail init --connect <code>` with a new code from team.trailhq.com');
     if (!res.ok) throw new Error(`the Trail workspace answered ${res.status}`);
     const sid = res.headers.get('mcp-session-id');
     if (sid && this.session) this.session.id = sid;
@@ -182,7 +182,7 @@ export class BrainProxy {
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 15_000),
     });
     const text = await res.text();
-    if (res.status === 401 || res.status === 403) throw new Error('your Trail workspace token was not accepted; run `trail init --connect <code>` with a new code from app.trailhq.com');
+    if (res.status === 401 || res.status === 403) throw new Error('your Trail workspace token was not accepted; run `trail init --connect <code>` with a new code from team.trailhq.com');
     if (!res.ok) throw new Error(`the Trail workspace answered ${res.status}`);
     const msg = pickReply(res.headers.get('content-type') ?? '', text, id);
     const protocol = typeof msg?.result?.protocolVersion === 'string' ? msg.result.protocolVersion : '2025-06-18';
@@ -217,7 +217,7 @@ export class BrainProxy {
   async callTool(name: string, args: Record<string, unknown>): Promise<CallResult> {
     const cloud = this.cloud();
     if (!cloud) {
-      return { content: [{ type: 'text', text: 'not connected to a Trail workspace · run `trail init --connect <code>` with the code from app.trailhq.com' }], isError: true };
+      return { content: [{ type: 'text', text: 'not connected to a Trail workspace · run `trail init --connect <code>` with the code from team.trailhq.com' }], isError: true };
     }
     try {
       await this.ready(cloud);

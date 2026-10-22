@@ -271,14 +271,14 @@ test("the lookup skips short and generic names: cn has the most callers, the nex
 });
 
 test("the offline line names the Trail it tried once, and the command to connect later carries --server unless it's Trail cloud", () => {
-  assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://app.trailhq.com"), "trail init --connect TRL-7F2A-K9QD");
+  assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://team.trailhq.com"), "trail init --connect TRL-7F2A-K9QD");
   assert.equal(connectAgain("trail init", "TRL-7F2A-K9QD", "https://dev.trailhq.com"), "trail init --connect TRL-7F2A-K9QD --server https://dev.trailhq.com");
   assert.equal(
     offlineLine("couldn't reach Trail", "http://localhost:5173", "TRL-7F2A-K9QD", "trail init"),
     "· couldn't reach Trail at http://localhost:5173 · set this repo up anyway · to connect it later: trail init --connect TRL-7F2A-K9QD --server http://localhost:5173",
   );
   assert.match(offlineLine("Trail didn't answer in time", "https://dev.trailhq.com", "TRL-7F2A-K9QD", "trail init"), /^· Trail at https:\/\/dev\.trailhq\.com didn't answer in time · /);
-  assert.match(offlineLine("Trail answered 502", "https://app.trailhq.com", "TRL-7F2A-K9QD", "trail init"), /^· Trail at https:\/\/app\.trailhq\.com answered 502 · set this repo up anyway · to connect it later: trail init --connect TRL-7F2A-K9QD$/);
+  assert.match(offlineLine("Trail answered 502", "https://team.trailhq.com", "TRL-7F2A-K9QD", "trail init"), /^· Trail at https:\/\/team\.trailhq\.com answered 502 · set this repo up anyway · to connect it later: trail init --connect TRL-7F2A-K9QD$/);
 });
 
 /* learnings ---------------------------------------------------------------- */

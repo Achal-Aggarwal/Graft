@@ -37,7 +37,7 @@ const BRAINS_LINE =
   "Connected to a Trail workspace: list_brains, get_context, search_rules and get_rules answer from the team's brains (brand, product, conventions, decisions); each result names its brain and rule. Use them for how the team does things, the tools above for the code.";
 
 /** What the brains-only server says when this machine isn't connected (any more). */
-const NOT_CONNECTED_LINE = 'Not connected to a Trail workspace: run `trail init --connect <code>` with the code from app.trailhq.com to use its brains here.';
+const NOT_CONNECTED_LINE = 'Not connected to a Trail workspace: run `trail init --connect <code>` with the code from team.trailhq.com to use its brains here.';
 
 function send(msg: object): void {
   process.stdout.write(`${JSON.stringify(msg)}\n`);

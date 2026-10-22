@@ -1334,7 +1334,7 @@ grouped(program.command("init"), GROUP.setup)
   .option("--verbose", "print every file written, the graph build's own output and the closing banner")
   .option(
     "--connect <code>",
-    "connect this machine to your Trail workspace with the one-time code from app.trailhq.com, and send it a summary of this repo (titles, counts and names; never code)",
+    "connect this machine to your Trail workspace with the one-time code from team.trailhq.com, and send it a summary of this repo (titles, counts and names; never code)",
   )
   .option("--pair <code>", "the pair code from Trail's onboarding page: that page shows this run live, then you review what it found")
   .option("--server <url>", "the Trail that gave the code (default: Trail cloud)")
@@ -1987,7 +1987,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
 }
 
 /**
- * `trail init --connect <CODE>`: the onboarding on app.trailhq.com. Claims the
+ * `trail init --connect <CODE>`: the onboarding on team.trailhq.com. Claims the
  * one-time code (a wrong or spent one stops here, before anything is written),
  * saves the workspace token where `trail login` keeps it, then runs init as
  * usual while the page ticks off connected, mapped and learned. At the end,

@@ -1,5 +1,5 @@
 /**
- * `trail init --connect <CODE>`: the onboarding on app.trailhq.com.
+ * `trail init --connect <CODE>`: the onboarding on team.trailhq.com.
  *
  * A person signs up on the web, picks "Writing Code", and is shown two
  * commands: install trail, then `trail init --connect TRL-XXXX-XXXX`. The code
