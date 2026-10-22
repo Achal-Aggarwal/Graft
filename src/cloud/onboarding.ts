@@ -368,7 +368,10 @@ export function tokensOnOneLookup(repo: string, opts: { contextDir?: string; tri
     // and generated code only when there's nothing else.
     // A name worth asking about: a short or generic one (`cn`, `utils`, `main`)
     // says nothing about the repo, so the example would be meaningless.
-    const all = buildRepoMap(graph, { hotspots: 500 }).hotspots.filter((h) => meaningfulSymbol(h.name));
+    // Falls back to every symbol when no name passes, so a repo of short names still gets a figure.
+    const spots = buildRepoMap(graph, { hotspots: 500 }).hotspots;
+    const named = spots.filter((h) => meaningfulSymbol(h.name));
+    const all = named.length ? named : spots;
     const product = all.filter((h) => !notProductCode(h.path));
     const hubs = (product.length ? product : all).slice(0, Math.max(1, opts.tries ?? 5));
     for (const hub of hubs) {
