@@ -57,12 +57,13 @@ test('the repo copy stands down only for a host that also runs the ~/.claude cop
 
 /** Runs `fn` as the repo's copy of the hooks, with `home` as the home folder; returns stdout. */
 async function asRepoCopy(repo: string, home: string, stdin: object, fn: () => Promise<void>): Promise<string> {
-  const saved = { argv1: process.argv[1], home: process.env.HOME, stdin: process.env.GRAFT_TEST_STDIN, project: process.env.CLAUDE_PROJECT_DIR, config: process.env.CLAUDE_CONFIG_DIR };
+  const saved = { argv1: process.argv[1], home: process.env.HOME, profile: process.env.USERPROFILE, stdin: process.env.GRAFT_TEST_STDIN, project: process.env.CLAUDE_PROJECT_DIR, config: process.env.CLAUDE_CONFIG_DIR };
   let out = '';
   const write = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => (typeof chunk === 'string' ? ((out += chunk), true) : (write as (...a: unknown[]) => boolean)(chunk, ...rest))) as typeof process.stdout.write;
   process.argv[1] = repoShim(repo);
   process.env.HOME = home;
+  process.env.USERPROFILE = home; // os.homedir() follows USERPROFILE on Windows
   delete process.env.CLAUDE_CONFIG_DIR;
   process.env.GRAFT_TEST_STDIN = JSON.stringify(stdin);
   process.env.CLAUDE_PROJECT_DIR = repo;
@@ -71,7 +72,7 @@ async function asRepoCopy(repo: string, home: string, stdin: object, fn: () => P
   } finally {
     process.stdout.write = write;
     process.argv[1] = saved.argv1!;
-    for (const [key, value] of [['HOME', saved.home], ['GRAFT_TEST_STDIN', saved.stdin], ['CLAUDE_PROJECT_DIR', saved.project], ['CLAUDE_CONFIG_DIR', saved.config]] as const) {
+    for (const [key, value] of [['HOME', saved.home], ['USERPROFILE', saved.profile], ['GRAFT_TEST_STDIN', saved.stdin], ['CLAUDE_PROJECT_DIR', saved.project], ['CLAUDE_CONFIG_DIR', saved.config]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }

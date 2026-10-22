@@ -50,7 +50,10 @@ async function withPath<T>(bin: string, fn: (env: NodeJS.ProcessEnv) => Promise<
 
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-test("a naming call that runs past its time gives plain names, and the line says a minute and how to try again", async () => {
+/** The stand-ins are shebang scripts on a ':'-joined PATH, which Windows can't run. */
+const posixOnly = { skip: process.platform === "win32" ? "shebang stand-ins" : false };
+
+test("a naming call that runs past its time gives plain names, and the line says a minute and how to try again", posixOnly, async () => {
   const s = standIn({ findings: [{ id: "i-1f0e2a9c41", name: "late-name", description: "too late" }] }, { sleepMs: 5000 });
   try {
     const t0 = Date.now();
@@ -67,7 +70,7 @@ test("a naming call that runs past its time gives plain names, and the line says
   }
 });
 
-test("a naming call that exits non-zero gives plain names; Claude Code's own words reach the screen as one plain line", async () => {
+test("a naming call that exits non-zero gives plain names; Claude Code's own words reach the screen as one plain line", posixOnly, async () => {
   const s = standIn(null, { fail: "boom\u001b[2J\u0007 internal error", stderr: "\u001b]0;owned\u0007trace\n" });
   try {
     const r = await withPath(s.bin, (env) => nameItems([skillCandidate()], env));
@@ -81,7 +84,7 @@ test("a naming call that exits non-zero gives plain names; Claude Code's own wor
   }
 });
 
-test("a name the model gives one skill that is another listed skill's plain name falls back", async () => {
+test("a name the model gives one skill that is another listed skill's plain name falls back", posixOnly, async () => {
   const other = { ...skillCandidate("i-2a2a2a2a2a", compiled("tests-cli", ["npm ci", "npm test"])), key: "github.com/acme/cli|job:tests", plainName: "tests-cli", nameWords: ["tests-cli"] };
   const s = standIn({ findings: [{ id: "i-1f0e2a9c41", name: "tests-cli", description: "Runs the tests." }] });
   try {

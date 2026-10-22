@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { lastTimeText, matchWall, sshRemoteFor, wallFixText } from "../src/trace/walls.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
@@ -83,7 +83,7 @@ test("a command over 64 KB matches nothing, and long commands stay fast (capped 
   assert.ok(big.length > 64 * 1024);
   assert.equal(matchWall(out, big, true), null);
   const probe = `
-    const { matchWall } = await import(${JSON.stringify(join(SRC, "trace", "walls.ts"))});
+    const { matchWall } = await import(${JSON.stringify(pathToFileURL(join(SRC, "trace", "walls.ts")).href)});
     const n = 2 * 1024 * 1024;
     const cmds = ['('.repeat(n / 2) + ')'.repeat(n / 2), '{ '.repeat(n / 2), 'if true; then '.repeat(n / 14), "sh -c 'npm x' ; ".repeat(n / 16)];
     const outs = ['x'.repeat(n), ': '.repeat(n / 2), 'zsh:1:'.repeat(n / 6), 'a\\n'.repeat(n / 2)];
@@ -93,6 +93,7 @@ test("a command over 64 KB matches nothing, and long commands stay fast (capped 
     process.stdout.write(JSON.stringify(rows));`;
   const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe], { encoding: "utf8", timeout: 30_000 });
   assert.equal(r.signal, null, "matchWall ran past 30 s");
+  assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout) as number[];
   for (const ms of rows) assert.ok(ms < 20, `2 MB took ${ms.toFixed(1)} ms`);
 });

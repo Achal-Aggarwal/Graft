@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpRepo } from "./helpers.js";
 import { lessonWorkedEpochs, noteWalls, readWalls, wallDays, wallsPath } from "../src/trace/wall-state.js";
 
@@ -27,9 +27,10 @@ const sh = (i: number) => i.toString(16).padStart(12, "0");
 test("a FIFO, a link to /dev/zero or a 2 MB file at walls.json reads as empty at once, and a write replaces it (capped child)", () => {
   const h = home();
   const path = wallsPath(h.env);
-  spawnSync("mkfifo", [path]);
+  // Windows has no FIFO and no /dev/zero: only the 2 MB file is tried there.
+  const posix = process.platform !== "win32";
   const probe = (kind: string) => `
-    const { readWalls, noteWalls } = await import(${JSON.stringify(join(SRC, "trace", "wall-state.ts"))});
+    const { readWalls, noteWalls } = await import(${JSON.stringify(pathToFileURL(join(SRC, "trace", "wall-state.ts")).href)});
     const env = ${JSON.stringify(h.env)};
     const t = performance.now();
     const r = readWalls(env);
@@ -38,6 +39,7 @@ test("a FIFO, a link to /dev/zero or a 2 MB file at walls.json reads as empty at
   const run = (kind: string) => {
     const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe(kind)], { encoding: "utf8", timeout: 10_000 });
     assert.equal(r.signal, null, `${kind}: readWalls hung`);
+    assert.equal(r.status, 0, r.stderr);
     const row = JSON.parse(r.stdout) as { empty: boolean; ms: number };
     assert.ok(row.empty, kind);
     assert.ok(row.ms < 1000, `${kind}: ${row.ms} ms`);
@@ -45,12 +47,15 @@ test("a FIFO, a link to /dev/zero or a 2 MB file at walls.json reads as empty at
     const w = JSON.parse(readFileSync(path, "utf8"));
     assert.deepEqual(Object.keys(w.classes), ["enospc"], kind);
   };
-  run("fifo");
   const zero = join(h.dir, "trail", "walls.json");
-  rmSync(zero, { force: true });
-  symlinkSync("/dev/zero", zero);
-  run("link to /dev/zero");
-  rmSync(zero, { force: true });
+  if (posix) {
+    spawnSync("mkfifo", [path]);
+    run("fifo");
+    rmSync(zero, { force: true });
+    symlinkSync("/dev/zero", zero);
+    run("link to /dev/zero");
+    rmSync(zero, { force: true });
+  }
   const big = { v: 1, read: {}, classes: { enospc: { seen: [{ d: "2026-10-01", sh: sh(1), epoch: 1, repo: SHOP, program: "cp" }], fixed: [], lessons: {} } }, pad: "x".repeat(2 * 1024 * 1024) };
   writeFileSync(zero, JSON.stringify(big));
   run("a 2 MB file");

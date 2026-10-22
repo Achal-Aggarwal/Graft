@@ -9,7 +9,7 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmpRepo } from "./helpers.js";
 import { cloneShape } from "./anchors-clone-fixture.js";
@@ -120,7 +120,7 @@ test("J14b-style leg at SessionStart: the index says (may be out of date) for a 
       fixture(b.repo);
       // A clone on its default branch at the commit last fetched: the CI file check needs that (c4 review).
       for (const a of [["update-ref", "refs/remotes/origin/beta", "HEAD"], ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/beta"]]) execFileSync("git", a, { cwd: b.repo, stdio: "ignore" });
-      const env = { ...b.env, PATH: `${bin(b.home)}:${process.env.PATH}` };
+      const env = { ...b.env, PATH: `${bin(b.home)}${delimiter}${process.env.PATH}` };
       save(b, ship(["git status", CMDS[kind]]));
       const start = () => sessionStartSkillsRun(startPayload(b, "startup"), CWD, env, { gate: gateFor(b) }).out.context ?? "";
       const out = start();

@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { agentRun, beginLookBack, finishLookBack, mayCallClaude } from "../src/init/run.js";
 import { readInitRecord } from "../src/init/init-record.js";
@@ -93,7 +93,7 @@ async function inWorld<T>(tag: string, fn: (w: World, env: NodeJS.ProcessEnv, cl
   const claude = standIn();
   const saved = { trail: process.env.TRAIL_HOME, path: process.env.PATH, dnt: process.env.DO_NOT_TRACK };
   process.env.TRAIL_HOME = w.trail;
-  process.env.PATH = `${claude.bin}:${saved.path}`;
+  process.env.PATH = `${claude.bin}${delimiter}${saved.path}`;
   process.env.DO_NOT_TRACK = "1";
   try {
     // No `timeout` on this env's PATH (the guardrail is still true), only the stand-in; no fetches (no gh).
@@ -188,7 +188,10 @@ function fakeTty(keys: string[]) {
   return { io: { stdin, stdout }, out: () => out };
 }
 
-test("the person at their terminal: one naming call, the screen, and enter keeps the ticked items (J01)", async () => {
+/** The naming call's stand-in is a shebang script, which Windows can't run. */
+const posixOnly = { skip: process.platform === "win32" ? "shebang stand-ins" : false };
+
+test("the person at their terminal: one naming call, the screen, and enter keeps the ticked items (J01)", posixOnly, async () => {
   await inWorld("person", async (w, env, claude) => {
     skillsOn(env);
     const said: string[] = [];

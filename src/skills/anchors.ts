@@ -25,7 +25,7 @@ import { flatLine } from '../notes/flatten.js';
 import { leadingCds, simpleCommands } from '../trace/shell.js';
 import { programWords } from '../trace/shell-words.js';
 import { unquote } from '../trace/shell-scan.js';
-import { FIXED_DIRS } from '../trace/guard-fast.js';
+import { FIXED_DIRS, pathDirs, programFiles } from '../trace/guard-fast.js';
 import { wideGone, type WideKind } from './anchors-wide.js';
 
 export type AnchorKind = 'program' | 'script' | 'make' | 'file' | 'branch' | WideKind;
@@ -283,7 +283,7 @@ const VERSION_DIRS = ['.volta/bin', '.bun/bin', '.cargo/bin', 'go/bin', '.pyenv/
 /** The hook's PATH, 4.11's fixed folders and the version managers' folders (R35). */
 function programDirs(env: NodeJS.ProcessEnv): string[] {
   const home = env.HOME || homedir();
-  const dirs = String(env.PATH ?? '').split(':').filter((d) => d.startsWith('/'));
+  const dirs = pathDirs(env);
   for (const d of FIXED_DIRS) {
     if (d.startsWith('$HOME')) dirs.push(join(home, d.slice('$HOME'.length)));
     else if (!d.includes('$USER')) dirs.push(d);
@@ -296,15 +296,18 @@ function programDirs(env: NodeJS.ProcessEnv): string[] {
   return [...new Set(dirs)];
 }
 
-function onPath(name: string, dirs: string[]): boolean {
-  return dirs.some((d) => {
+/** On Windows a program is git.exe or npm.cmd, and no file has an exec bit: any regular file of those names counts. */
+function onPath(name: string, dirs: string[], env: NodeJS.ProcessEnv): boolean {
+  const names = programFiles(name, env);
+  const win = process.platform === 'win32';
+  return dirs.some((d) => names.some((n) => {
     try {
-      const st = statSync(join(d, name));
-      return st.isFile() && (st.mode & 0o111) !== 0;
+      const st = statSync(join(d, n));
+      return st.isFile() && (win || (st.mode & 0o111) !== 0);
     } catch {
       return false;
     }
-  });
+  }));
 }
 
 /** Scripts in the nearest package.json from `dir` up to the checkout; null when none can be read. */
@@ -381,7 +384,7 @@ export function goneAnchors(skill: ParsedSkill, cwd: string, env: NodeJS.Process
         // No PATH, no check: the fixed folders alone miss /usr/bin.
         if (!String(env.PATH ?? '').trim()) continue;
         dirs ??= programDirs(env);
-        if (!onPath(a.name, dirs)) out.push(a);
+        if (!onPath(a.name, dirs, env)) out.push(a);
       } else if (!cwd) {
         continue;
       } else if (a.kind === 'script') {

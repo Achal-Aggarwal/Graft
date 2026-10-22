@@ -61,7 +61,8 @@ const cachePath = (b: Box) => join(b.trail, "state", "anchors-cache.json");
 
 /* ---------------------------------------------------------------- cache */
 
-test("cache: a FIFO at the cache path doesn't hold SessionStart (D100)", () => {
+test("cache: a FIFO at the cache path doesn't hold SessionStart (D100)", { skip: process.platform === "win32" }, () => {
+  // Windows has no FIFO.
   const b = cliBox("fifo");
   mkdirSync(join(b.trail, "state"), { recursive: true });
   execFileSync("mkfifo", [cachePath(b)]);

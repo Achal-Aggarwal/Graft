@@ -168,7 +168,8 @@ test("service: include, extends, a merge key and flow style are not judged; a 30
   assert.deepEqual(gone(b, ["docker compose up worker"]), ["service:worker#1"], "under 256 KB it is read");
 });
 
-test("service: a FIFO at the compose path doesn't block (D100)", () => {
+test("service: a FIFO at the compose path doesn't block (D100)", { skip: process.platform === "win32" }, () => {
+  // Windows has no FIFO.
   const b = box("svc-fifo");
   execFileSync("mkfifo", [join(b.checkout, "compose.yaml")]);
   const t0 = Date.now();
@@ -277,7 +278,7 @@ test("subcommand: the cache is used when nothing changed and rescanned when one 
   assert.match(entry.sig, /^[0-9a-f]{16}$/);
   assert.deepEqual(entry.cli, { acme: ["build", "connxct", "d", "deploy", "init", "status"] });
   assert.ok(!readFileSync(path, "utf8").includes("registrations"), "no file text");
-  assert.equal((statSync(path).mode & 0o777).toString(8), "600");
+  if (process.platform !== "win32") assert.equal((statSync(path).mode & 0o777).toString(8), "600");
   // Same size, same mtime, new text: the cache answers (it can't see the change).
   writeFileSync(file, CLI_SRC.replace("connxct", "connect"));
   utimesSync(file, t, t);

@@ -18,7 +18,7 @@ import type { RunCall, RunState, SkillSessionState, WallClass } from '../trace/t
 import type { GateCtx } from '../trace/skill-session.js';
 import { matchWall, sshRemoteFor, wallFixText, lastTimeText, type WallCtx } from '../trace/walls.js';
 import { lessonWorkedEpochs, noteWalls, programKey, readWalls, type WallsFile } from '../trace/wall-state.js';
-import { FIXED_DIRS } from '../trace/guard-fast.js';
+import { FIXED_DIRS, pathDirs, programFiles } from '../trace/guard-fast.js';
 import { sessionPath } from '../trace/gate-file.js';
 import { ignoredFailure, detectRepairs } from '../trace/repairs.js';
 import { normalizeCommand, relativizePaths, stripTimeout } from '../trace/shell.js';
@@ -36,28 +36,33 @@ export const AVOIDED_MS = 30 * 60 * 1000;
 export const COMPACT_FIXES = 2;
 const MAX_DENIED_LINES = 64;
 
-/** An executable `program` in the hook's PATH or 4.11's fixed folders (the hook's PATH can be narrower than the shell's). */
+/**
+ * An executable `program` in the hook's PATH or 4.11's fixed folders (the hook's PATH can be narrower than the shell's).
+ * On Windows PATH splits on ';', the program is git.exe or npm.cmd (PATHEXT), and any regular file counts: there is no exec bit.
+ */
 export function onPathHere(program: string, env: NodeJS.ProcessEnv): boolean {
   if (!/^[\w.+-]{1,40}$/.test(program)) return false;
   const home = env.HOME || homedir();
   let user = env.USER || env.LOGNAME || '';
   if (!user) try { user = userInfo().username; } catch { /* none */ }
-  const dirs = String(env.PATH ?? '').split(':').filter((d) => d.startsWith('/'));
+  const dirs = pathDirs(env);
   for (const d of FIXED_DIRS) {
     if (d.startsWith('$HOME')) dirs.push(join(home, d.slice('$HOME'.length)));
     else if (d.includes('$USER')) { if (/^[\w.-]{1,64}$/.test(user) && user !== '.' && user !== '..') dirs.push(d.replace('$USER', user)); }
     else dirs.push(d);
   }
-  return [...new Set(dirs)].some((d) => {
+  const names = programFiles(program, env);
+  const win = process.platform === 'win32';
+  return [...new Set(dirs)].some((d) => names.some((n) => {
     try {
-      const p = join(d, program);
+      const p = join(d, n);
       if (!statSync(p).isFile()) return false;
-      accessSync(p, constants.X_OK);
+      if (!win) accessSync(p, constants.X_OK);
       return true;
     } catch {
       return false;
     }
-  });
+  }));
 }
 
 /** The facts a fix line may use: which programs are here, and origin's SSH address when it is https (checked by sshRemoteFor). */

@@ -7,9 +7,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
-  agentRuns, at, box, calling, done, finish, grow, offersLog, one, postBashFailHook, preBashHook, promptHook, reply, resultOf, session, startHook, stateOf, stopHook,
+  agentRuns, at, box, calling, done, finish, grow, offersLog, one, postBashFailHook, preBashHook, promptHook, reply, resultOf, session, startHook, stateOf, stopHook, type Box,
 } from './claude-skills-journey-fixtures.js';
 import {
   DOCKER_ERR, FIXED, GO_TEST, correctedRelease, ctxOf, dockerDay, globalCopy, oneOrNothing, readInitRecordOf, readdirSyncSafe, releaseKept, saidQuote, startContext, wallLessonKept, wholeTurn,
@@ -82,19 +82,22 @@ test('both copies registered: the wall fix on a failed command and the init hand
 
 test('fail open: a corrupt walls.json, lessons file, init record or session file, a FIFO in their place, and an unwritable Trail home leave every hook one JSON object or nothing', async () => {
   const { spawnSync } = await import('node:child_process');
+  // Windows has no FIFO and ignores chmod on a folder: there only the corrupt files are tried.
+  const posix = process.platform !== 'win32';
   const fifo = (p: string) => { mkdirSync(join(p, '..'), { recursive: true }); assert.equal(spawnSync('mkfifo', [p]).status, 0); };
   const cases: Record<string, (b: Box) => void> = {
     'walls.json not JSON': (b) => writeFileSync(join(b.trail, 'walls.json'), '{"v":1,"read":'),
     'walls.json odd shapes': (b) => writeFileSync(join(b.trail, 'walls.json'), JSON.stringify({ v: 1, read: { x: 5 }, classes: { 'docker-rootless': { seen: 'x', fixed: [null], lessons: { 'l-0a1b2c3d': { worked: 'no' } } } } })),
-    'walls.json a FIFO': (b) => fifo(join(b.trail, 'walls.json')),
+    ...(posix ? { 'walls.json a FIFO': (b: Box) => fifo(join(b.trail, 'walls.json')) } : {}),
     'a broken lesson file and a FIFO among the learnings': (b) => {
       mkdirSync(join(b.trail, 'learnings'), { recursive: true });
       writeFileSync(join(b.trail, 'learnings', 'lesson-docker-rootless-2026-10-01.md'), '---\nkind: [lesson\nwall: docker-rootless\n---\n');
+      if (!posix) return;
       fifo(join(b.trail, 'learnings', 'lesson-docker-rootless-2026-10-02.md'));
       fifo(join(b.trail, 'learnings', 'no-timeout.md'));
     },
     'the init record not JSON': (b) => { mkdirSync(join(b.trail, 'init', 'github.com', 'acme'), { recursive: true }); writeFileSync(join(b.trail, 'init', 'github.com', 'acme', 'shop.json'), '{"v":2,"pending":[{'); },
-    'the init record a FIFO': (b) => fifo(join(b.trail, 'init', 'github.com', 'acme', 'shop.json')),
+    ...(posix ? { 'the init record a FIFO': (b: Box) => fifo(join(b.trail, 'init', 'github.com', 'acme', 'shop.json')) } : {}),
     'session files not JSON': (b) => {
       mkdirSync(join(b.trail, 'sessions'), { recursive: true });
       for (const n of ['.json', '.hooks.json', '.denied.jsonl', '.gate.json']) writeFileSync(join(b.trail, 'sessions', `3c9d2e1f-0a1b-4c2d-8e3f-${String(boxesSoFar + 1).padStart(12, '0')}${n}`), '{"skills":');
@@ -111,6 +114,7 @@ test('fail open: a corrupt walls.json, lessons file, init record or session file
       done(b);
     }
   }
+  if (!posix) return;
   const b = box('r1b-open-ro');
   try {
     mkdirSync(join(b.trail, 'sessions'), { recursive: true });
@@ -192,7 +196,7 @@ test('lesson consent through the hooks: after the offer, a typed line that is no
     mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, 'colima'), '#!/bin/sh\nexit 0\n');
     chmodSync(join(bin, 'colima'), 0o755);
-    b.env.PATH = `${bin}:${process.env.PATH ?? ''}`;
+    b.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ''}`;
     await dockerDay(session(b), 10);
     const s = session(b);
     assert.equal((await dockerDay(s, 14))?.decision, 'block');

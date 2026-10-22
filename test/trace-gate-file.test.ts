@@ -64,8 +64,8 @@ test("written from the live injections only: groups of consecutive gated steps, 
     ],
     askedAt: null, askedToolUseId: null, approvedAt: null,
   });
-  assert.equal(statSync(gateFilePath(SID, env)).mode & 0o777, 0o600);
-  assert.equal(statSync(join(env.TRAIL_HOME!, "sessions")).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(gateFilePath(SID, env)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(join(env.TRAIL_HOME!, "sessions")).mode & 0o777, 0o700);
 });
 
 test("steps apart, or of different kinds, are separate groups", () => {
@@ -141,7 +141,7 @@ test("post marks: appended one per line (0600), taken in order, and gone once ta
   appendPostMark(SID, { id: "toolu_2", at: "2026-10-01T10:00:02.000Z", failed: true }, env);
   appendPostMark(SID, { id: "toolu_3", at: "2026-10-01T10:00:03.000Z", failed: false, tail: "y".repeat(9000) }, env);
   const path = gateFilePath(SID, env).replace(/\.gate\.json$/, ".post.jsonl");
-  assert.equal(statSync(path).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.ok(readFileSync(path, "utf8").split("\n").every((l) => Buffer.byteLength(l) < 1024), "each append is one small write");
   writeFileSync(path, readFileSync(path, "utf8") + "not json\n{\"id\":5}\n");
   const marks = takePostMarks(SID, env);
