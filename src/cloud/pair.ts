@@ -15,11 +15,12 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { graftCliPath } from "../claude/paths.js";
 import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
 import type { SavedSkill } from "../skills/found-skill.js";
-import { skillName } from "../skills/skills.js";
+import { skillDirs, skillName } from "../skills/skills.js";
 import { matter } from "../util/front-matter.js";
 import { newState, pickerRepos } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
@@ -51,8 +52,15 @@ export interface PairFindings {
   teammates?: TeammateSummary[];
 }
 
-/** One team skill as a found item, or nothing when its file can't be read. */
+/**
+ * One team skill init just wrote as a found item. Nothing for a skill that was
+ * already there, a skill kept for the person alone, or a file that isn't under
+ * the repo's own `.claude/skills/`: only what init wrote into the repo goes up.
+ */
 function foundSkillItem(checkout: string, s: SavedSkill): Record<string, unknown>[] {
+  const name = skillName(s.skill.name);
+  const expected = join(skillDirs(checkout).repo, name, "SKILL.md");
+  if (!s.created || s.skill.for !== "team" || !name || resolve(s.path) !== resolve(expected)) return [];
   let text: string;
   try {
     text = readFileSync(s.path, "utf8");
@@ -62,7 +70,7 @@ function foundSkillItem(checkout: string, s: SavedSkill): Record<string, unknown
   return [
     {
       kind: "skill",
-      path: `.claude/skills/${skillName(s.skill.name)}/SKILL.md`,
+      path: `.claude/skills/${name}/SKILL.md`,
       title: s.skill.title,
       author: noteAuthor(checkout),
       body: matter(text).content.trim(),
@@ -156,7 +164,7 @@ export class PairRun {
           ...learningsPayload(place.checkout)
             .filter((l) => l.ref === "")
             .map((l) => ({ kind: "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches })),
-          ...skills.filter((s) => s.skill.for === "team").flatMap((s) => foundSkillItem(place.checkout, s)),
+          ...skills.flatMap((s) => foundSkillItem(place.checkout, s)),
         ]
       : [];
     const n = found.length;

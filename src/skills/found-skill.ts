@@ -24,10 +24,11 @@ export interface FoundSkill {
   quotes: string[];
 }
 
-/** A skill as written: where its SKILL.md is, whether this run wrote it or it was there already. */
+/** A skill's SKILL.md: where it is, and whether this run wrote it (`false`: one of that name was already there). */
 export interface SavedSkill {
   skill: FoundSkill;
   path: string;
+  created: boolean;
 }
 
 /** SKILL.md for a found skill: the frontmatter every skill has, then its steps as a numbered list. */
@@ -38,21 +39,23 @@ export function renderFoundSkill(s: FoundSkill): string {
 }
 
 /**
- * Write the skill, and return the path of its SKILL.md. A skill of that name
- * the repo or this machine already has is left as it is: its path comes back.
+ * Write the skill, and return the path of its SKILL.md and whether this call
+ * wrote it. A skill of that name the repo or this machine already has is left
+ * as it is: its path comes back with `created: false`, and it isn't ours to
+ * report or send anywhere.
  */
-export function saveFoundSkill(repo: string, s: FoundSkill): string {
+export function saveFoundSkill(repo: string, s: FoundSkill): { path: string; created: boolean } {
   const name = skillName(s.name);
   if (!name) throw new Error("a skill needs a name");
   const dirs = skillDirs(repo);
   for (const d of [dirs.repo, dirs.home]) {
     const there = join(d, name, "SKILL.md");
-    if (existsSync(there)) return there;
+    if (existsSync(there)) return { path: there, created: false };
   }
   if (s.for === "you") ensureRepoHome(repo);
   const dir = join(s.for === "you" ? dirs.home : dirs.repo, name);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "SKILL.md");
   writeFileSync(file, renderFoundSkill(s));
-  return file;
+  return { path: file, created: true };
 }

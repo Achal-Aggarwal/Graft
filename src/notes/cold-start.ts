@@ -15,13 +15,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { saveFoundSkill, type FoundSkill, type SavedSkill } from "../skills/found-skill.js";
+import { OWN_SKILLS, skillName } from "../skills/skills.js";
 import { countBucket, durationBucket } from "../telemetry/contract.js";
 import { track } from "../telemetry/track.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 import { noteAuthor } from "./git-facts.js";
 import { ensureRepoHome } from "./home.js";
-import { saveFoundSkill, type FoundSkill, type SavedSkill } from "../skills/found-skill.js";
-import { OWN_SKILLS, skillName } from "../skills/skills.js";
 import { mentionedFiles, shortDate, writeNote, type Note } from "./notes.js";
 import { claudeProjectDir } from "./session-cost.js";
 
@@ -669,12 +669,17 @@ export function saveFindings(repo: string, findings: Finding[], author = noteAut
   );
 }
 
-/** Each found skill as a SKILL.md: the team's in the repo, the person's own in ~/.trail. One that can't be written is skipped. */
+/**
+ * Each found skill as a SKILL.md: the team's in the repo, the person's own in
+ * ~/.trail. Only the ones this call wrote come back: a skill of that name that
+ * was already there is left alone, and one that can't be written is skipped.
+ */
 export function saveSkills(repo: string, skills: FoundSkill[]): SavedSkill[] {
   const out: SavedSkill[] = [];
   for (const skill of skills) {
     try {
-      out.push({ skill, path: saveFoundSkill(repo, skill) });
+      const { path, created } = saveFoundSkill(repo, skill);
+      if (created) out.push({ skill, path, created });
     } catch {
       /* read-only checkout, say: the learnings still saved */
     }
