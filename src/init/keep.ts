@@ -46,13 +46,19 @@ import { KEEP_LINE, RELAY_LINE } from './relay.js';
 import { afterKeepLines, type ScreenFacts } from './review-screen.js';
 import { applyName } from './name-call.js';
 import { prefText } from './prefs.js';
+import { lessonRefused, newLessonId, writeLesson } from '../skills/lessons.js';
+import { onlyRepeats } from '../skills/follow-learnings.js';
 import { recompileInitSkill, typedAt } from './replay-runs.js';
 import { dayWords } from './review-screen.js';
 import type { InitItem, KeepAnswer } from './types.js';
 
 export { leadWords, parseKeepAnswer, replyNamesList } from './keep-answer.js';
 
-export interface KeepResult { kept: InitItem[]; notKept: InitItem[]; refused: Array<{ item: InitItem; why: string }> }
+export interface KeepResult {
+  kept: InitItem[]; notKept: InitItem[]; refused: Array<{ item: InitItem; why: string }>;
+  /** Part 7: kept preferences that only repeat a step of a skill kept with them, kept as a lesson on that skill instead. */
+  folded?: Array<{ item: InitItem; skill: string }>;
+}
 
 /** Where a keep writes: the checkout (phase 0's notes) and its repo key; the run it answers; PR-review findings in memory. */
 export interface KeepPlace {
@@ -80,7 +86,7 @@ export function prefLine(item: Pick<InitItem, 'pref'>, env: NodeJS.ProcessEnv): 
   return line || null;
 }
 
-function keepSkill(item: InitItem, how: 'tty' | 'yes' | 'keep', place: KeepPlace, env: NodeJS.ProcessEnv, now: Date): { id: string; name: string } | string {
+function keepSkill(item: InitItem, how: 'tty' | 'yes' | 'keep', place: KeepPlace, env: NodeJS.ProcessEnv, now: Date): { id: string; name: string; steps: string[] } | string {
   const s = item.skill;
   if (!s) return 'gone';
   let compiled = s.compiled;
@@ -95,7 +101,7 @@ function keepSkill(item: InitItem, how: 'tty' | 'yes' | 'keep', place: KeepPlace
   try {
     const ref = savePersonal(compiled, { from: 'init', runId: compiled.source.runId, consent: 'init', stepsVerified: stepsTotal(compiled), env, now });
     track('skill_saved', { from: 'init', scope: 'personal' });
-    return { id: ref.id, name: compiled.name };
+    return { id: ref.id, name: compiled.name, steps: compiled.steps.map((s) => s.cmd) };
   } catch (e) {
     return e instanceof Error && /name|taken|exists/i.test(e.message) ? 'taken' : 'failed';
   }
@@ -132,6 +138,26 @@ function keepPreference(item: InitItem, place: KeepPlace, env: NodeJS.ProcessEnv
   return { id: n.id ?? '', name: '' };
 }
 
+/**
+ * Part 7: the skill kept here whose steps a preference only repeats ("run scripts/gen_schema.py" beside a skill whose
+ * step runs it), so the agent hears it once, with the skill. Only a preference for this repo just for the person: one
+ * for every repo or added to the repo says more than one skill's step, and keeps its own place.
+ */
+function foldInto(item: InitItem, skills: Array<{ name: string; steps: string[] }>, env: NodeJS.ProcessEnv): { name: string; line: string } | null {
+  if (item.scope === 'repo' || item.applies === 'every repo' || !skills.length) return null;
+  const line = prefLine(item, env);
+  if (!line || lessonRefused(line)) return null;
+  const s = skills.find((k) => onlyRepeats(line, k.steps));
+  return s ? { name: s.name, line } : null;
+}
+
+/** The preference as a lesson on the skill: the person's own words, dated the day they first said it. */
+function keepAsLesson(item: InitItem, into: { name: string; line: string }, place: KeepPlace, env: NodeJS.ProcessEnv, now: Date): { id: string; name: string } {
+  const id = newLessonId();
+  writeLesson({ id, skill: into.name, at: firstDay(item.count, now), text: into.line, kind: 'lesson', src: 'correction', wall: null }, place.repoKey, env);
+  return { id, name: '' };
+}
+
 function keepReview(item: InitItem, place: KeepPlace): { id: string; name: string } | string {
   const f = place.reviews?.get(item.id);
   if (!f) return 'gone';
@@ -150,13 +176,20 @@ export function keepItems(picked: InitItem[], all: InitItem[], how: 'tty' | 'yes
   const kept: InitItem[] = [];
   const refused: KeepResult['refused'] = [];
   const names: KeptName[] = [];
-  for (const item of picked) {
+  // Part 7: skills first, so a preference that only repeats a step of one kept here goes into it as a lesson.
+  const skills: Array<{ name: string; steps: string[] }> = [];
+  const folded: NonNullable<KeepResult['folded']> = [];
+  for (const item of [...picked].sort((a, b) => Number(b.kind === 'skill') - Number(a.kind === 'skill'))) {
     let r: { id: string; name: string } | string;
     try {
+      const into = item.kind === 'preference' ? foldInto(item, skills, env) : null;
       r = item.kind === 'skill' ? keepSkill(item, how, at, env, now)
         : item.kind === 'guardrail' ? keepGuardrail(item, at, env, now)
-          : item.kind === 'preference' ? keepPreference(item, at, env, now)
-            : keepReview(item, at);
+          : into ? keepAsLesson(item, into, at, env, now)
+            : item.kind === 'preference' ? keepPreference(item, at, env, now)
+              : keepReview(item, at);
+      if (typeof r !== 'string' && 'steps' in r) skills.push({ name: r.name, steps: r.steps as string[] });
+      if (into && typeof r !== 'string') folded.push({ item, skill: into.name });
     } catch {
       r = 'failed';
     }
@@ -204,7 +237,7 @@ export function keepItems(picked: InitItem[], all: InitItem[], how: 'tty' | 'yes
     }, env);
   }
   track('cold_start', { source: how === 'keep' ? 'keep' : 'sessions', outcome: 'kept' });
-  return { kept, notKept, refused };
+  return { kept, notKept, refused, ...(folded.length ? { folded } : {}) };
 }
 
 /* -------------------------------------------------------------------------- */

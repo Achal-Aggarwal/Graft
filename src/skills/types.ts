@@ -346,3 +346,18 @@ export interface UpdateReceipt {
   at: string;
   usedAt: string | null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Part 7: learnings and skills said once. As above, optional fields in a      */
+/* further declaration of the interface they widen.                            */
+/* -------------------------------------------------------------------------- */
+
+export interface CompiledSkill {
+  /** The one line saying which steps follow the person's learnings rather than the run, or were left out. */
+  followed?: string;
+}
+
+export interface HookOut {
+  /** UserPromptSubmit: ids of the learnings the run block already says, left out of this prompt's learnings lines. */
+  said?: string[];
+}

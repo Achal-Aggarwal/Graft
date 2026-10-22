@@ -32,6 +32,7 @@ import { probePassWords, type ProbeResult } from './probes.js';
 import { isGuardrailLesson, lessonLines, lessonRefused, readLessons, type Lesson } from './lessons.js';
 import { goneAnchors, outOfDateLine, type Anchor } from './anchors.js';
 import { WIDE_SCAN_MS } from './anchors-wide.js';
+import { markLines, stepNote, withFixes, type RecallMark } from './follow-learnings.js';
 
 export { runProbes, probePassWords, readyProbes, PROBE_BUDGET_MS, type ProbeResult, type ProbeOpts, type ProbeGit } from './probes.js';
 
@@ -76,8 +77,8 @@ function gatedNote(steps: number[], canAsk: boolean): string {
 /** What a tests or query check shows by default: "step n passing" already says it. */
 const PLAIN_SHOWS = new Set(['the tests pass', 'rows come back']);
 
-function checkText(c: Candidate, values: Record<string, string>): { text: string; shows: string | null } | null {
-  const s = c.skill;
+function checkText(c: Candidate, values: Record<string, string>, skill: Pick<ParsedSkill, 'check' | 'checkShows' | 'meta'> = c.skill): { text: string; shows: string | null } | null {
+  const s = skill;
   if (!s.check) return null;
   const shows = s.checkShows ? prose(fillParams(s.checkShows, values)) : s.meta['check-tool'] ? 'READY' : null;
   return { text: flat(fillParams(s.check, values)), shows };
@@ -99,8 +100,10 @@ function goneOf(c: Candidate, scan: boolean, until?: number): Anchor[] {
  * anchors gone where the candidate was found) opens it with the out-of-date line (4.18). Both count toward 1,200:
  * lessons are the second thing cut, oldest first; guardrail-kind lessons and the out-of-date line never are.
  */
-export function runBlock(c: Candidate, ctx: { values: Record<string, string>; notes: string[]; probes: ProbeResult[]; canAsk: boolean; header: 'job' | 'compact'; lastFail: { step: number; at: string } | null; lessons?: Lesson[]; gone?: Anchor[]; anchorDeadline?: number }): string {
-  const s = c.skill;
+export function runBlock(c: Candidate, ctx: { values: Record<string, string>; notes: string[]; probes: ProbeResult[]; canAsk: boolean; header: 'job' | 'compact'; lastFail: { step: number; at: string } | null; lessons?: Lesson[]; gone?: Anchor[]; anchorDeadline?: number; marks?: RecallMark[] }): string {
+  // Part 7: a step the person's learning goes against shows its way (or is marked to leave out); never cut.
+  const marks = ctx.marks ?? [];
+  const s = withFixes(c.skill, marks);
   const name = nameOf(c);
   const ood = outOfDateLine(name, ctx.gone ?? goneOf(c, ctx.header === 'job', ctx.anchorDeadline));
   const opening = ood ? [`[trail] ${ood}`] : [];
@@ -125,12 +128,13 @@ export function runBlock(c: Candidate, ctx: { values: Record<string, string>; no
   const steps: string[] = [];
   for (const st of s.steps) {
     const note = st.wait ? ' (a wait: run it in the background if it may take over 2 minutes)' : st.bg ? ' (in the background)' : '';
-    steps.push(`  ${st.n} ${flat(fillParams(st.cmd, ctx.values))}${note}`);
+    const own = c.skill.steps.find((x) => x.n === st.n)?.cmd ?? st.cmd;
+    steps.push(`  ${st.n} ${flat(fillParams(st.cmd, ctx.values))}${note}${stepNote(marks, st.n, fillParams(own, ctx.values))}`);
     const g = groups.find((x) => x.steps[x.steps.length - 1] === st.n);
     if (g) steps.push(gatedNote(g.steps, ctx.canAsk));
   }
 
-  const chk = checkText(c, ctx.values);
+  const chk = checkText(c, ctx.values, s);
   let check: string | null = null;
   if (chk) {
     const asStep = [...s.steps].reverse().find((x) => x.cmd === s.check);
@@ -142,9 +146,10 @@ export function runBlock(c: Candidate, ctx: { values: Record<string, string>; no
   const fails = s.ifFails.filter((l) => !neverSave(l)).slice(0, 2).map((l) => `  If it fails: ${prose(l)}`);
   const notes = ctx.notes.map((n) => `  ${prose(n)}`);
   const footer = `  If a step fails, fix that step and say so. End with "Used skill ${name}".`;
+  const follow = markLines(marks).map((l) => `  ${prose(l, 400)}`);
 
   const build = (o: { notes: boolean; fails: number; passed: boolean; lessons: number }) => [
-    ...opening, header, ...failed, ...(o.passed && passed ? [passed] : []), ...before, ...checkFirst, ...steps, ...(check ? [check] : []),
+    ...opening, header, ...failed, ...(o.passed && passed ? [passed] : []), ...before, ...checkFirst, ...steps, ...(check ? [check] : []), ...follow,
     ...fails.slice(0, o.fails), ...(o.notes ? notes : []), footer, ...guardLines, ...lessonRest.slice(lessonRest.length - o.lessons),
   ].join('\n');
   const all = lessonRest.length;

@@ -26,13 +26,18 @@ import { MAX_RUN_LINES, MAX_STEP_CHARS, gatedKind } from './risk.js';
 import { parseSkillMd, renderSkillMd } from './skillmd.js';
 import { refusedAtRecall } from './recall.js';
 import { rebuildCompiled } from './skill-rebuild.js';
-import { printDiff, sizeGate } from './skill-diff.js';
+import { FOLD_MAX_CHARS, printDiff, sizeGate } from './skill-diff.js';
 import { goodName } from './compile-words.js';
 import { bareCommand, simpleCommands } from '../trace/shell.js';
 import { sameGatedCommand } from './fold-gated.js';
 
 export type FoldPlan =
   | { op: 'update'; step: number; cmd: SkillStep; why: 'failed-then-worked' }
+  /**
+   * Part 7: the block showed step `step` the way a live learning says (`follows`: whose, "your preference"), and it
+   * worked; `more`: the other steps the same learning changed that ran that way too, changed with it.
+   */
+  | { op: 'update'; step: number; cmd: SkillStep; why: 'preference'; follows: string; more?: SkillStep[] }
   | { op: 'extend'; at: number; cmds: SkillStep[]; why: 'lesson' | 'two-uses'; lessonIds: string[] }
   | { op: 'split'; from: number; to: number; name: string }
   | { op: 'none'; why: FoldNone };
@@ -54,6 +59,11 @@ export interface FoldInput {
   splitName?: string;
   /** Whether a skill name is taken (the store's nameTaken): the split's name is never one (review). */
   taken?: (name: string) => boolean;
+  /**
+   * Part 7: steps the block showed the way a live learning says rather than as the skill has them (`cmd` with the
+   * skill's params, `follows` whose learning it was). An update to that way is offered once it ran and checked out.
+   */
+  preferred?: Array<{ step: number; cmd: string; follows: string }>;
 }
 
 const MAX_EXTEND = 2;
@@ -121,6 +131,23 @@ function planOf(i: FoldInput, base: CompiledSkill): FoldPlan {
   // P4, spec 13: a new step is one this use ran and passed, so only candidates fidelity counted (review).
   const { cands: all, matched } = candidates(base, fresh, vals);
   const cands = all.filter((c) => passedHere(c, i.fid));
+
+  // Part 7: steps the block showed the person's way, that ran that way: the change is from the fresh compile (P4).
+  const fv = freshValues(fresh);
+  const changes: Array<{ cmd: SkillStep; follows: string }> = [];
+  for (const p of i.preferred ?? []) {
+    const old = base.steps[p.step - 1];
+    if (!old || old.gated || !i.fid.ran.includes(p.step) || (changes.length && changes[0]!.follows !== p.follows)) continue;
+    const hit = fresh.steps.find((s) => !s.gated && ranAs(fillParams(p.cmd, vals), fillParams(s.cmd, fv), vals));
+    if (!hit) continue;
+    const cmd = inSkillTerms(hit.cmd, fresh, base, vals);
+    if (cmd === null) return none('new-param');
+    if (cmd !== old.cmd) changes.push({ cmd: { ...old, cmd, n: p.step }, follows: p.follows });
+  }
+  if (changes.length) {
+    const [first, ...rest] = changes.sort((a, b) => a.cmd.n - b.cmd.n);
+    return { op: 'update', step: first!.cmd.n, cmd: first!.cmd, why: 'preference', follows: first!.follows, ...(rest.length ? { more: rest.map((c) => c.cmd) } : {}) };
+  }
 
   // 3. update: a step that failed and was done another way, the same program and verb.
   for (const c of [...i.fid.changed].sort((a, b) => a.step - b.step)) {
@@ -208,7 +235,10 @@ export function planFold(i: FoldInput): FoldPlan {
     if (plan.op !== 'update' && plan.op !== 'extend') return plan;
     const next = applyWhy(base, plan);
     if ('why' in next) return none(next.why);
-    if (!sizeGate(renderSkillMd(base), renderSkillMd(next.skill)).ok) return none('too-big');
+    // Part 7: a change to follow a learning swaps a program in the steps it names and nothing else, so on a small skill
+    // it can touch most of the file; only the size in characters holds it back.
+    const size = sizeGate(renderSkillMd(base), renderSkillMd(next.skill));
+    if (!(plan.op === 'update' && plan.why === 'preference' ? size.chars <= FOLD_MAX_CHARS : size.ok)) return none('too-big');
     return plan;
   } catch {
     return none('no-change');
@@ -252,8 +282,12 @@ function applyWhy(base: CompiledSkill, plan: Exclude<FoldPlan, { op: 'none' | 's
   if (plan.op === 'update') {
     const old = steps[plan.step - 1];
     if (!old || !plan.cmd?.cmd) return { why: 'layout' };
-    if (base.checkIsStep && old.cmd === base.check) check = plan.cmd.cmd;
-    steps[plan.step - 1] = { ...plan.cmd };
+    for (const next of [plan.cmd, ...(plan.why === 'preference' ? plan.more ?? [] : [])]) {
+      const was = steps[next.n - 1];
+      if (!was) return { why: 'layout' };
+      if (base.checkIsStep && was.cmd === base.check) check = next.cmd;
+      steps[next.n - 1] = { ...next };
+    }
   } else {
     if (!Number.isInteger(plan.at) || plan.at < 0 || plan.at > steps.length || !plan.cmds?.length) return { why: 'layout' };
     steps.splice(plan.at, 0, ...plan.cmds.map((s) => ({ ...s })));

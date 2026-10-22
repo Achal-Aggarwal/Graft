@@ -28,6 +28,7 @@ import { runCheckout } from './run-checkout.js';
 import { forgetLearning, initDraftCommand, lessonCommand, type CliOut } from './cli-skills-1b.js';
 import { noteAgentForget, type Dropped } from './forget-notice.js';
 import { draftFoldText, liftRestoreVersion, restoreVersionCommand, updateCommand, versionsLine } from './cli-skills-2.js';
+import { stepLearnings } from './follow-learnings.js';
 
 /** Seams for tests; production passes nothing. */
 export interface SkillCliDeps {
@@ -202,6 +203,7 @@ function draft(x: Io, runId: string, print: boolean): void {
     repoRoot: root, home: x.env.HOME || '', platform: process.platform,
     prior: findPriorSheet(sheet, x.env), applies: sheet.repoKey, now: x.now(), readSheet: (id: string) => readRunSheet(id, x.env),
     taken: (n: string) => nameTaken(n, scope) !== null,
+    learnings: stepLearnings({ repoKeys: [sheet.repoKey], checkout: root, env: x.env }),
   };
   // An offer keeps a repeated job; a run with no check (an asked save) is shown the way an ask keeps it.
   let c = compileRun(sheet, { ...opts, moment: 'repeated' });

@@ -45,6 +45,7 @@ import { repoKnown } from '../trace/known-repo.js';
 import type { FoldPlanner } from './offer-update.js';
 import type { Fired, Settled } from './credit.js';
 import { useFor, type DialectUse } from '../trace/dialect.js';
+import { stepLearnings, withFollowLine } from './follow-learnings.js';
 
 const SAME_LINE_MS = 5000;
 
@@ -236,6 +237,7 @@ export function compileOffered(sheet: RunSheet, st: SkillSessionState, ctx: Offe
     repoRoot: root, home: env.HOME || homedir(), platform: process.platform,
     prior: findPriorSheet(sheet, env), moment: 'repeated', applies: sheet.repoKey, now: ctx.now, readSheet: read,
     taken: (n) => nameTaken(n, { ...scope, checkout: root || scope.checkout }) !== null,
+    learnings: stepLearnings({ repoKeys: [sheet.repoKey], checkout: root, env }),
   });
 }
 
@@ -277,11 +279,11 @@ export function repeatedOfferDue(i: OfferInput): OfferDue {
   const joined = joinCarriedSheet(sheet, read);
   const ownDates = rep.dates === rep.sessionDays;
   const seen = { n: ownDates ? rep.dates : rep.sessionDays, unit: ownDates ? 'day' as const : 'time' as const };
-  const lines = offerLines({
+  const lines = withFollowLine(offerLines({
     job, check: hit, ordinal: seen.n, unit: seen.unit,
     commands: joined.counts.commands, failed: joined.counts.failed, steps: stepsTotal(compiled.skill), where: 'this repo',
     branches: job === 'ship' ? stableBranches(joined.calls, joined.jobWords) : [],
-  });
+  }), compiled.skill.followed);
   return {
     due: true,
     offer: {

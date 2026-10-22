@@ -33,6 +33,8 @@ import { getSkillState } from './state.js';
 import { listAllPersonal, nameTaken } from './store.js';
 import { MAX_SKILL_BYTES } from './store-fs.js';
 import { nextVersion } from './versions.js';
+import { fillParams } from './params.js';
+import { recallMarks, stepLearnings, whose } from './follow-learnings.js';
 
 export type PlanInj = Pick<SkillInjection, 'params' | 'steps' | 'at' | 'check'>;
 /** `inj`: the block's injection (Stop passes the live one); else it is found in `st`, else in the run's session file. */
@@ -151,8 +153,11 @@ function gather(skillId: string, runId: string, env: NodeJS.ProcessEnv, o: PlanO
   try {
     if (fresh) splitName = proposeName(sheet, fresh.steps, (n) => nameTaken(n, scope) !== null);
   } catch { /* no split name: no split */ }
+  // Part 7: the steps the block showed the way a live learning says, as it showed them (the injection's steps).
+  const preferred = inj ? recallMarks(skill.steps, stepLearnings({ repoKeys: [sheet.repoKey], checkout: repoRoot, env })).flatMap((m) =>
+    [...m.fixes].flatMap(([step, cmd]) => (cmd && inj.steps?.[step - 1] === fillParams(cmd, inj.params ?? {}) ? [{ step, cmd, follows: whose(m.l) }] : []))) : [];
   const input: FoldInput = {
-    skill, text, fresh, fid, inj: { params: inj?.params ?? {} }, taken: (n) => nameTaken(n, scope) !== null,
+    skill, text, fresh, fid, inj: { params: inj?.params ?? {} }, taken: (n) => nameTaken(n, scope) !== null, ...(preferred.length ? { preferred } : {}),
     earlierExtraShas: earlier.map((u) => u.extraShas ?? []), lessons: readLessons(ref.dir),
     earlierRan: earlier.map((u) => u.stepsRan), earlierChecks: earlier.map((u) => u.check), base, ...(splitName ? { splitName } : {}),
   };

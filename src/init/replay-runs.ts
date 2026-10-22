@@ -36,6 +36,7 @@ import { claudeTranscript, openPlain } from './plain-file.js';
 import { tamperedBefore, turnOnly, writeMarkIn } from './replay-tamper.js';
 import { dayOf, eachLine } from './transcript.js';
 import type { SkillSource, TypedRef } from './types.js';
+import { stepLearnings } from '../skills/follow-learnings.js';
 
 /** A session's replay stops at this many runs (4.2 cost control). */
 export const MAX_REPLAY_RUNS = 200;
@@ -366,6 +367,7 @@ export function compileInitSkill(entry: ReplaySheet, prior: ReplaySheet | null, 
   const r = compileRun(entry.sheet, {
     repoRoot: entry.root, home: env.HOME || homedir(), platform: process.platform, prior: prior?.sheet ?? null, moment: 'repeated',
     applies: repoKey, now, readSheet: () => null, taken: (n) => nameTaken(n, scope) !== null,
+    learnings: stepLearnings({ repoKeys: [...new Set([repoKey, entry.sheet.repoKey])], checkout: entry.root, env }),
   });
   if (!r.ok) return { ok: false, why: r.reason, detail: r.detail };
   if (r.skill.steps.length < 2) return { ok: false, why: 'one-step' };
