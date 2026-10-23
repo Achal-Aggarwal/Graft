@@ -168,6 +168,15 @@ function stealStale(lock: string): boolean {
 }
 
 /**
+ * Whether a failed open of the lock means someone else has it. On Windows a lock file that another
+ * process is deleting is "delete pending": opening it fails with EPERM (or EBUSY), not EEXIST, until
+ * the last handle closes. That is the lock being let go, so wait for it like any held lock.
+ */
+export function lockHeld(code: string | undefined, platform: NodeJS.Platform = process.platform): boolean {
+  return code === 'EEXIST' || (platform === 'win32' && (code === 'EPERM' || code === 'EBUSY'));
+}
+
+/**
  * Lock `<path>.lock` (open with wx). Polls every 10 ms up to waitMs (default 200). Steals a lock
  * older than 10 s. On timeout returns { ok: false } and does NOT run fn: a fold that ran twice
  * would count every call twice, and a lost update is better than a double one.
@@ -182,7 +191,7 @@ export function withLock<T>(path: string, fn: () => T, waitMs = 200): Locked<T> 
       fd = openSync(lock, 'wx', 0o600);
       break;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      if (!lockHeld((e as NodeJS.ErrnoException).code)) throw e;
     }
     // The deadline is checked on every turn: a lock that can't be taken over (a dangling symlink, a
     // folder we can't move) must not spin forever.
