@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
+import { isUtf8 } from "node:buffer";
 import { graftCliPath } from "../claude/paths.js";
 import { readBranchCache, refreshBranches } from "../notes/branches.js";
 import { knownRepos, repoName, repoPlace, trailHome } from "../notes/home.js";
@@ -37,7 +38,7 @@ import { matter } from "../util/front-matter.js";
 import { appendPrivateFile, ensurePrivateDir, PRIVATE_FILE_MODE, writePrivateFile } from "../util/private-file.js";
 import { cacheDir, readJson, writeJsonAtomic } from "../util/state.js";
 import { headLearnings } from "./head-learnings.js";
-import { isError, postActivity, readCloud, uploadLearnings, type ActivityEvent, type ApiError, type Cloud, type UploadedLearning } from "./workspace.js";
+import { isError, postActivity, readCloud, uploadLearnings, type ActivityEvent, type ApiError, type Cloud, type SkillFileUpload, type UploadedLearning } from "./workspace.js";
 
 /** A failed sync is retried after this long, not on every command. */
 const RETRY_MS = 5 * 60 * 1000;
@@ -68,6 +69,57 @@ function inside(root: string, p: string): boolean {
 
 /** A SKILL.md bigger than this is not a skill, and is never sent. */
 const SKILL_MAX_BYTES = 256 * 1024;
+/** What Trail keeps of a skill's folder besides SKILL.md (the server's limits too). */
+const SKILL_FILES_MAX = 100;
+const SKILL_FILE_MAX_BYTES = 1024 * 1024;
+const SKILL_FOLDER_MAX_BYTES = 4 * 1024 * 1024;
+/** Never part of a skill, though a folder may hold them. */
+const NOT_SKILL_FILE = /(^|\/)(node_modules|__pycache__|\.git|\.venv)(\/|$)|(^|\/)\.DS_Store$|\.(map|pyc)$/;
+
+/**
+ * The files git tracks in a skill's folder besides SKILL.md, as they go up:
+ * text as is, anything else as base64, the executable bit kept. A file that
+ * resolves outside the checkout, or is too big, stays behind; so do the
+ * ones past the folder's limits, smallest paths first.
+ */
+function skillFolderFiles(root: string, folder: string): SkillFileUpload[] {
+  let rel: string;
+  try {
+    rel = relative(root, realpathSync(folder)).split(sep).join("/");
+  } catch {
+    return [];
+  }
+  const out: SkillFileUpload[] = [];
+  let total = 0;
+  for (const path of [...trackedAmong(root, [rel + "/"])].sort()) {
+    const inner = path.slice(rel.length + 1);
+    if (!inner || inner === "SKILL.md" || NOT_SKILL_FILE.test(inner) || out.length === SKILL_FILES_MAX) continue;
+    try {
+      const file = join(root, ...path.split("/"));
+      const st = statSync(file);
+      if (!st.isFile() || st.size > SKILL_FILE_MAX_BYTES || total + st.size > SKILL_FOLDER_MAX_BYTES) continue;
+      if (!inside(root, realpathSync(file))) continue;
+      const bytes = readFileSync(file);
+      const text = !bytes.includes(0) && isUtf8(bytes);
+      total += bytes.length;
+      out.push({
+        path: inner,
+        content: text ? bytes.toString("utf8") : bytes.toString("base64"),
+        ...(text ? {} : { encoding: "base64" as const }),
+        ...(st.mode & 0o111 ? { executable: true } : {}),
+      });
+    } catch {
+      /* gone, or can't be read */
+    }
+  }
+  return out;
+}
+
+/** `cut-a-release` → `Cut a release`: a skill's folder name as a title. */
+function skillTitle(name: string): string {
+  const words = name.replace(/[-_]+/g, " ").trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : name;
+}
 
 /**
  * Which of `paths` (relative to `root`) git tracks, by what `git ls-files` says,
@@ -134,17 +186,21 @@ function skillItems(checkout: string): UploadedLearning[] {
       const text = readFileSync(file, "utf8");
       const parsed = matter(text);
       const d = parsed.data as Record<string, unknown>;
-      const description = typeof d.description === "string" ? (d.description.trim().split("\n")[0] ?? "").trim() : "";
+      const description = typeof d.description === "string" ? d.description.trim().replace(/\s+/g, " ") : "";
+      const files = skillFolderFiles(root, join(dir, name));
       out.push({
         path: `.claude/skills/${name}/SKILL.md`,
         kind: "skill",
         ref: "",
-        title: description || name,
+        title: skillTitle(typeof d.name === "string" && d.name.trim() ? d.name.trim() : name),
+        why: description,
         author: typeof d.author === "string" ? d.author.trim() : "",
         date: "",
         touches: [],
         body: parsed.content.trim(),
-        hash: sha256(text),
+        // The whole folder: any file changing sends the skill again.
+        hash: sha256(JSON.stringify(["folder", text, files.map((f) => [f.path, sha256(f.content), !!f.executable])])),
+        files,
       });
     } catch {
       /* a SKILL.md that can't be read or parsed */
@@ -211,7 +267,8 @@ export function workspaceLearnings(checkout: string, opts: { tree?: boolean } = 
   }));
   // A skill whose text holds a secret stays behind too, named like a learning is.
   for (const skill of skillItems(checkout)) {
-    const why = secretReason(`${skill.title}\n${skill.body}`);
+    const texts = (skill.files ?? []).filter((f) => !f.encoding).map((f) => f.content);
+    const why = secretReason([skill.title, skill.why ?? "", skill.body, ...texts].join("\n"));
     if (why) leftOut.push({ name: skill.path, ref: "", why });
     else learnings.push(skill);
   }

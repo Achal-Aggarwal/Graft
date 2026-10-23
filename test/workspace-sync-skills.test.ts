@@ -68,9 +68,12 @@ test("the repo's skill goes up as a skill learning, and a skill kept on this mac
   const s = items[0]!;
   assert.equal(s.path, ".claude/skills/release-hotfix/SKILL.md");
   assert.equal(s.kind, "skill");
-  assert.equal(s.title, "Cut a hotfix release from a tagged commit");
+  // SKILL.md's name titles it; its description is what it does and when.
+  assert.equal(s.title, "Release hotfix");
+  assert.equal(s.why, "Cut a hotfix release from a tagged commit");
   assert.equal(s.body, "# Release a hotfix\n\n1. Branch from the tag.\n2. Cherry-pick the fix.");
-  assert.equal(s.hash, sha(HOTFIX));
+  assert.deepEqual(s.files, []);
+  assert.equal(s.hash, sha(JSON.stringify(["folder", HOTFIX, []])));
   assert.equal(s.author, "Anirudh");
   assert.equal(s.ref, "");
   assert.deepEqual(s.touches, []);
@@ -83,7 +86,8 @@ test("a skill without a description is titled by its folder, and plain learnings
   writeNote(dir, { title: "Keep payment retries at 4", body: "## Decided\nFour retries.", author: "Sam", date: "2026-10-07", touches: [] });
   track(dir);
   const [s] = skillItems(dir);
-  assert.equal(s!.title, "pdf-coords");
+  assert.equal(s!.title, "Pdf coords");
+  assert.equal(s!.why, "");
   assert.equal(s!.author, "");
   const learning = (learningsPayload(dir) ?? []).filter((l) => l.path.startsWith(".trail/learnings/"));
   assert.equal(learning.length, 1, "the fixture's learning is in the payload");
@@ -164,4 +168,54 @@ test("a SKILL.md over 256 KB is skipped", () => {
   writeSkill(repo, "huge", `---\ndescription: Too big\n---\n\n${"x".repeat(256 * 1024 + 1)}\n`);
   track(dir);
   assert.deepEqual(skillItems(dir).map((i) => i.path), [".claude/skills/release-hotfix/SKILL.md"]);
+});
+
+test("a skill goes up with its folder: what git tracks, text as text, the rest as base64", () => {
+  const dir = checkout();
+  const root = join(skillDirs(dir).repo, "fill-forms");
+  writeSkill(skillDirs(dir).repo, "fill-forms", "---\nname: fill-forms\ndescription: Fill PDF forms\n---\n\n1. Read references/forms.md\n2. Run scripts/fill.py\n");
+  mkdirSync(join(root, "references"), { recursive: true });
+  mkdirSync(join(root, "scripts"));
+  mkdirSync(join(root, "assets"));
+  mkdirSync(join(root, "node_modules", "x"), { recursive: true });
+  writeFileSync(join(root, "references", "forms.md"), "# Forms\nUse field names.\n");
+  writeFileSync(join(root, "scripts", "fill.py"), "print('ok')\n", { mode: 0o755 });
+  writeFileSync(join(root, "assets", "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+  writeFileSync(join(root, "node_modules", "x", "index.js"), "junk");
+  track(dir);
+  // Written after the commit: untracked, so it stays here.
+  writeFileSync(join(root, "references", "draft.md"), "not yet");
+  // A link out of the repo is never followed.
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), "skills-outside-")));
+  writeFileSync(join(outside, "secret.md"), "elsewhere");
+  symlinkSync(join(outside, "secret.md"), join(root, "references", "linked.md"));
+  git(dir, "add", "-f", ".");
+  git(dir, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "-m", "link");
+  writeFileSync(join(root, "references", "draft.md"), "not yet");
+  git(dir, "rm", "-q", "--cached", ".claude/skills/fill-forms/references/draft.md");
+
+  const s = skillItems(dir)[0]!;
+  const files = Object.fromEntries((s.files ?? []).map((f) => [f.path, f]));
+  assert.deepEqual(Object.keys(files).sort(), ["assets/logo.png", "references/forms.md", "scripts/fill.py"]);
+  assert.equal(files["references/forms.md"]!.content, "# Forms\nUse field names.\n");
+  assert.equal(files["references/forms.md"]!.encoding, undefined);
+  assert.equal(files["scripts/fill.py"]!.executable, true);
+  assert.equal(files["assets/logo.png"]!.encoding, "base64");
+  assert.deepEqual([...Buffer.from(files["assets/logo.png"]!.content, "base64")], [0x89, 0x50, 0x4e, 0x47, 0, 1, 2]);
+
+  // Any file changing sends the skill again.
+  const before = s.hash;
+  writeFileSync(join(root, "references", "forms.md"), "# Forms\nUse field ids.\n");
+  assert.notEqual(skillItems(dir)[0]!.hash, before);
+});
+
+test("a secret in one of a skill's files keeps the whole skill on this machine", () => {
+  const dir = checkout();
+  const root = join(skillDirs(dir).repo, "deploy");
+  writeSkill(skillDirs(dir).repo, "deploy", "---\nname: deploy\ndescription: Deploy\n---\n\n1. Run scripts/go.sh\n");
+  mkdirSync(join(root, "scripts"));
+  // Built in pieces so the test file itself holds no token.
+  writeFileSync(join(root, "scripts", "go.sh"), 'TOKEN="' + "EA" + "Ab1C2d3E4f5G6h7I8j9K0l1M2n3O4p5Q6rS7t8U9v0" + '"\n');
+  track(dir);
+  assert.equal(skillItems(dir).length, 0);
 });

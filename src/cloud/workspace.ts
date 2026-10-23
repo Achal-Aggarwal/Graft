@@ -295,14 +295,48 @@ export interface UploadedLearning {
   touches: string[];
   body: string;
   hash: string;
+  /** A skill's description: what it does and when to use it. */
+  why?: string;
+  /** A skill's other files: everything git tracks in its folder besides SKILL.md. */
+  files?: SkillFileUpload[];
 }
 
-export function uploadLearnings(
+export interface SkillFileUpload {
+  /** Relative to the skill's folder: `references/forms.md`, `scripts/fill.py`. */
+  path: string;
+  /** The file as text, or base64 when `encoding` says so. */
+  content: string;
+  encoding?: "base64";
+  executable?: boolean;
+}
+
+/** Most of one upload request: skills bring their folders, so a big set goes up in parts. */
+export const UPLOAD_PART_BYTES = 12 * 1024 * 1024;
+
+export async function uploadLearnings(
   c: Cloud,
   req: { repo: { key: string; name: string }; learnings: UploadedLearning[] },
   fetchImpl?: Fetch,
 ): Promise<{ repo: string; learnings: number; added: number } | ApiError> {
-  return authed(c, "PUT", "/api/cli/learnings", req, { timeoutMs: 60_000, fetchImpl });
+  const parts: UploadedLearning[][] = [[]];
+  let bytes = 0;
+  for (const l of req.learnings) {
+    const size = JSON.stringify(l).length;
+    if (bytes + size > UPLOAD_PART_BYTES && parts.at(-1)!.length) {
+      parts.push([]);
+      bytes = 0;
+    }
+    parts.at(-1)!.push(l);
+    bytes += size;
+  }
+  let added = 0;
+  let last: { repo: string; learnings: number; added: number } | ApiError | null = null;
+  for (const learnings of parts) {
+    last = await authed<{ repo: string; learnings: number; added: number }>(c, "PUT", "/api/cli/learnings", { ...req, learnings }, { timeoutMs: 60_000, fetchImpl });
+    if (isError(last)) return last;
+    added += last.added;
+  }
+  return { ...last!, added };
 }
 
 /**
