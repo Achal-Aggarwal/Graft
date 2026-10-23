@@ -33,6 +33,7 @@ import {
   meaningfulSymbol,
   openBranch,
   tokensOnOneLookup,
+  lastMergedPrs,
 } from "../src/cloud/onboarding.js";
 import { readCloud, writeCloud, type Cloud } from "../src/cloud/workspace.js";
 import { inWorkspace, recordActivity } from "../src/cloud/workspace-sync.js";
@@ -209,6 +210,48 @@ test("one real lookup on the fresh map: the most central symbol, and what readin
   // The same numbers the agent sees on that query.
   assert.deepEqual(parseAskSavings(formatAsk(ask(dir, "how does retryDo work", { source: true, limit: 5 }))), { saved: t.saved, pct: t.pct, pack: t.pack, files: t.files, baseline: t.baseline });
   assert.equal(tokensOnOneLookup(mkdtempSync(join(tmpdir(), "connect-nograph-"))), null);
+});
+
+test("the last merged PR is the question: its title, measured, with how many of its files the answer found", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "connect-last-pr-"));
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "sam@acme.dev");
+  git(dir, "config", "user.name", "Sam");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/api.git");
+  const filler = Array.from({ length: 400 }, (_, i) => `export function helper${i}(x: number): number {\n  return x * ${i} + ${i};\n}\n`).join("\n");
+  writeFileSync(join(dir, "client.ts"), `export function retryDo(attempts: number): number {\n  return attempts;\n}\n\n${filler}`);
+  writeFileSync(join(dir, "a.ts"), 'import { retryDo } from "./client";\nexport function useA() {\n  return retryDo(4);\n}\n');
+  git(dir, "add", ".");
+  git(dir, "commit", "-qm", "first");
+  // The PR that changed the code, squash-merged.
+  writeFileSync(join(dir, "client.ts"), `export function retryDo(attempts: number): number {\n  return attempts * 2;\n}\n\n${filler}`);
+  git(dir, "commit", "-qam", "Double the attempts in retryDo (#12)");
+  // Newer, but docs only, and a release chore: neither is the work.
+  writeFileSync(join(dir, "README.md"), "# api\n");
+  git(dir, "add", ".");
+  git(dir, "commit", "-qm", "Say what the api is (#13)");
+  writeFileSync(join(dir, "a.ts"), 'import { retryDo } from "./client";\nexport function useA() {\n  return retryDo(5);\n}\n');
+  git(dir, "commit", "-qam", "chore(release): 1.2.0 (#14)");
+  const prs = lastMergedPrs(dir);
+  assert.deepEqual(prs.map((p) => p.number), [12]);
+  assert.deepEqual(prs[0], { number: 12, title: "Double the attempts in retryDo", url: "https://github.com/acme/api/pull/12", files: ["client.ts"] });
+  await buildGraph(dir);
+  const t = tokensOnOneLookup(dir);
+  assert.ok(t?.pr, "measured on the last PR");
+  assert.equal(t.question, "Double the attempts in retryDo");
+  assert.equal(t.pr.number, 12);
+  assert.equal(t.pr.found, 1, "the answer pointed at the file the PR changed");
+  assert.equal(t.pr.changed, 1);
+  assert.ok(t.saved > 0 && t.baseline > t.pack);
+  // A merge commit names the PR too, with its title on the body's first line.
+  writeFileSync(join(dir, "a.ts"), 'import { retryDo } from "./client";\nexport function useA() {\n  return retryDo(6);\n}\n');
+  git(dir, "checkout", "-qb", "acme/use-six");
+  git(dir, "commit", "-qam", "use six");
+  git(dir, "checkout", "-q", "main");
+  git(dir, "merge", "-q", "--no-ff", "acme/use-six", "-m", "Merge pull request #15 from acme/use-six", "-m", "Use six attempts in useA");
+  assert.deepEqual(lastMergedPrs(dir)[0], { number: 15, title: "Use six attempts in useA", url: "https://github.com/acme/api/pull/15", files: ["a.ts"] });
+  // No PR in the history: the central-symbol lookup, as before.
+  assert.deepEqual(lastMergedPrs(mkdtempSync(join(tmpdir(), "connect-no-git-"))), []);
 });
 
 test("tests, fixtures, vendored and generated code are not product code", () => {
