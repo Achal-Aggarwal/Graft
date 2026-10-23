@@ -20,7 +20,9 @@
  * says nothing about it.
  */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
+import { join } from "node:path";
 import { formatAsk, ask } from "../ask/ask.js";
 import { contextDirFor } from "../context/node-file.js";
 import { loadGraphCached } from "../graph/load.js";
@@ -210,6 +212,22 @@ export interface TokensSummary {
   pct: number;
   /** How many files the baseline reads whole. */
   files: number;
+  /**
+   * When the question was the last merged PR's title: that PR, at most
+   * {@link PR_FILES_SENT} of the code files it changed, how many it changed
+   * in all, and how many of them the answer pointed to.
+   */
+  pr?: LastPr & { changed: number; found: number };
+}
+
+/** A merged pull request, as git's history on the default branch tells it. */
+export interface LastPr {
+  number: number;
+  title: string;
+  /** The PR on GitHub, when the repo is there. */
+  url?: string;
+  /** The product code files it changed that are still in the repo. */
+  files: string[];
 }
 
 export interface LearningSummary {
@@ -361,6 +379,8 @@ export function meaningfulSymbol(name: string): boolean {
  * files). Null without a graph.
  */
 export function tokensOnOneLookup(repo: string, opts: { contextDir?: string; tries?: number } = {}): TokensSummary | null {
+  const pr = tokensOnLastPr(repo, opts);
+  if (pr) return pr;
   try {
     const graph = loadGraphCached(contextDirFor(repo, opts.contextDir));
     if (!graph) return null;
@@ -379,6 +399,72 @@ export function tokensOnOneLookup(repo: string, opts: { contextDir?: string; tri
       const r = ask(repo, query, { source: true, limit: 5, contextDir: opts.contextDir });
       const got = parseAskSavings(formatAsk(r));
       if (got && got.saved > 0) return { question: `how ${hub.name} works`, symbol: hub.name, ...got };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** The most of a PR's changed files sent to Trail; `changed` says how many there were. */
+export const PR_FILES_SENT = 20;
+
+/** `Merge pull request #12 from acme/retry-backoff` (a merge), with the title on the body's first line. */
+const MERGED_PR = /^Merge pull request #(\d+) from (\S+)/;
+/** `Retry with backoff (#12)` (a squash or rebase merge). */
+const SQUASHED_PR = /^(.+?) \(#(\d+)\)$/;
+/** Bots' PRs and release chores, which say nothing about the work. */
+const NOT_WORK_PR = /^(bump |chore\(release\)|release[: ]|\[bot\]|merge (branch|remote-tracking))/i;
+
+/**
+ * The merged PRs on the default branch, newest first, read from git alone:
+ * GitHub's merge commits and squash merges both name the PR. Only PRs that
+ * changed product code still in the repo; at most `limit` of them.
+ */
+export function lastMergedPrs(repo: string, limit = 5): LastPr[] {
+  const base = git(repo, ["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || "HEAD";
+  const log = git(repo, ["log", "-n", "300", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", base]);
+  if (!log) return [];
+  const key = repoPlace(repo).key;
+  const out: LastPr[] = [];
+  for (const rec of log.split("\x1e")) {
+    const [sha, subject = "", body = ""] = rec.trim().split("\x1f");
+    if (!sha) continue;
+    const merged = subject.match(MERGED_PR);
+    const squashed = merged ? null : subject.match(SQUASHED_PR);
+    if (!merged && !squashed) continue;
+    const number = Number(merged ? merged[1] : squashed![2]);
+    const title = cleanSubject(merged ? body.split("\n").find((l) => l.trim()) || merged[2]!.split("/").pop()!.replace(/[-_]/g, " ") : squashed![1]!);
+    if (!title || NOT_WORK_PR.test(title)) continue;
+    const changed = git(repo, ["diff", "--name-only", "--diff-filter=AMR", `${sha}^1`, sha]) ?? "";
+    const files = changed
+      .split("\n")
+      .map((f) => f.trim())
+      .filter((f) => f && !notProductCode(f) && !docOrConfig(f) && existsSync(join(repo, f)));
+    if (!files.length) continue;
+    const url = key.startsWith("github.com/") ? `https://${key}/pull/${number}` : undefined;
+    out.push({ number, title, ...(url ? { url } : {}), files });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * The lookup an agent starting the last merged PR would make: its title as
+ * the question, answered with the code inlined, against reading the files
+ * the answer covers whole (ask's own estimate). The next PR back is tried
+ * when one saves nothing. Null with no PR in git's history or no graph.
+ */
+export function tokensOnLastPr(repo: string, opts: { contextDir?: string; tries?: number } = {}): TokensSummary | null {
+  try {
+    if (!loadGraphCached(contextDirFor(repo, opts.contextDir))) return null;
+    for (const pr of lastMergedPrs(repo, Math.max(1, opts.tries ?? 3))) {
+      const r = ask(repo, pr.title, { source: true, limit: 5, contextDir: opts.contextDir });
+      const got = parseAskSavings(formatAsk(r));
+      if (!got || got.saved <= 0) continue;
+      const pointed = new Set(r.hits.map((h) => h.pointer.replace(/:L\d+(-L?\d+)?$/, "")));
+      const found = pr.files.filter((f) => pointed.has(f)).length;
+      return { question: pr.title, symbol: "", ...got, pr: { ...pr, files: pr.files.slice(0, PR_FILES_SENT), changed: pr.files.length, found } };
     }
     return null;
   } catch {

@@ -157,7 +157,9 @@ export class PairRun {
       "tokens",
       "done",
       tokens ? `~${tokens.pct}% fewer tokens` : "skipped",
-      tokens ? `One lookup used ~${tokens.pct}% fewer tokens than reading ${tokens.files} file${tokens.files === 1 ? "" : "s"} (estimate)` : undefined,
+      tokens
+        ? `${tokens.pr ? `Your last PR, #${tokens.pr.number}: one` : "One"} lookup used ~${tokens.pct}% fewer tokens than reading ${tokens.files} file${tokens.files === 1 ? "" : "s"} (estimate)`
+        : undefined,
     );
   }
 
