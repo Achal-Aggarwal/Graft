@@ -78,12 +78,22 @@ function sameHome(env: NodeJS.ProcessEnv): boolean {
   return trailHome(env) === trailHome(process.env);
 }
 
-/** The person's line for a preference, read again now; null when it changed or is gone. */
+/** The person's line for a preference, whole, read again now; null when it changed or is gone. */
 export function prefLine(item: Pick<InitItem, 'pref'>, env: NodeJS.ProcessEnv): string | null {
   const ref = item.pref?.refs[0];
   const text = ref ? typedAt(ref, env) : null;
-  const line = text ? prefText(text).slice(0, 120) : '';
+  const line = text ? prefText(text) : '';
   return line || null;
+}
+
+const TITLE_MAX = 120;
+/** A preference's title: its line, or over 120 characters cut after the last whole word that fits, with an ellipsis. */
+export function prefTitle(line: string): string {
+  if (line.length <= TITLE_MAX) return line;
+  // Room for the ellipsis; a word that ends right at the cut is whole.
+  const fit = line.slice(0, TITLE_MAX - 1);
+  const at = /\s/.test(line[TITLE_MAX - 1]!) ? fit.length : fit.lastIndexOf(' ');
+  return `${(at > 0 ? fit.slice(0, at) : fit).replace(/[\s,.;:]+$/, '')}…`;
 }
 
 function keepSkill(item: InitItem, how: 'tty' | 'yes' | 'keep', place: KeepPlace, env: NodeJS.ProcessEnv, now: Date): { id: string; name: string; steps: string[] } | string {
@@ -125,7 +135,7 @@ function keepPreference(item: InitItem, place: KeepPlace, env: NodeJS.ProcessEnv
   const line = prefLine(item, env);
   if (!line) return 'gone';
   const input: WriteNoteInput = {
-    title: line, body: line, author: '', date: firstDay(item.count, now), kind: 'preference', src: 'init-typed', standing: true,
+    title: prefTitle(line), body: line, author: '', date: firstDay(item.count, now), kind: 'preference', src: 'init-typed', standing: true,
     evidence: `said on ${item.count.days} days, ${span(item.count)}`,
   };
   if (item.scope !== 'repo' && item.applies === 'every repo') {

@@ -260,7 +260,10 @@ export function noteSignals(jsonl: string, repo: string): NoteSignal[] {
     if (!edits.length) continue;
     const times = fails.length === 1 ? 'once' : `${fails.length} times`;
     const file = [...edits].reverse().find((f) => f !== '');
-    out.push({ kind: 'fixed', key: `fixed:${pass.t.uuid}`, what: `${pass.name} failed ${times}, then passed after your change${file ? ` to ${file}` : ''}.` });
+    // Keyed on the episode, the first pass after the last failure: a rerun that passes again is the same sign.
+    const lastFail = fails[fails.length - 1]!.t.at;
+    const first = checks.slice(0, i).find((c) => !c.failed && c.name === pass.name && c.t.at > lastFail) ?? pass;
+    out.push({ kind: 'fixed', key: `fixed:${first.t.uuid}`, what: `${pass.name} failed ${times}, then passed after your change${file ? ` to ${file}` : ''}.` });
     break;
   }
 

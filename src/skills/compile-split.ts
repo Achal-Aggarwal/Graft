@@ -63,6 +63,12 @@ export interface LoopWait { token: string | null; whileOk?: true }
 
 interface Ctx { repoRoot: string; home: string; job: JobClass | null }
 
+/** A venv's own activate by a plain path in the repo: setup known to be safe, carried into the steps chained after it. */
+const VENV_ACTIVATE = /^(?:source|\.)\s+((?:\.\/)?[\w.-]+(?:\/[\w.-]+)*\/bin\/activate)$/;
+const venvActivate = (head: string) => {
+  const m = VENV_ACTIVATE.exec(head);
+  return !!m && !m[1]!.split('/').includes('..');
+};
 const SETUP = /^(?:export|source|\.|set\s+(?:-\w*a|-o\s+allexport)|umask|nvm\s+use|conda\s+activate|pyenv\s+shell)\b/;
 /** Shell options that change nothing for one command on its own (`set -a` is setup, not one of these). */
 const IGNORED = /^(?:set(?:\s+(?:[-+][b-zA-Z]+|pipefail|errexit|nounset|xtrace|verbose))+|shopt\b.*|setopt\b.*|trap\b.*|unset\b.*|true|:)$/;
@@ -260,6 +266,8 @@ export function statementsOf(cmd: string, cwd: string | null, ctx: Ctx): Stateme
       const mixed = links.length > 1 && links.some((l) => l.pieces.slice(0, -1).some((p) => p.sep === '||') && cdLink(s, l) === null);
       const units = mixed ? [{ start: links[0]!.start, end: links[links.length - 1]!.end, pieces: links.flatMap((l) => l.pieces) }] : links;
       let run: Array<{ l: Link; kind: CallKind; guard: boolean; bodies: string }> = [];
+      // `source .venv/bin/activate && STEP`: the activate goes into each step chained after it, word for word.
+      let carry: string | null = null;
       const emit = (r: typeof run, poll?: { cmd: string; wait: LoopWait }) => {
         let text = poll ? poll.cmd : s.slice(r[0]!.l.start, r[r.length - 1]!.l.end).trim();
         const bodies = r.map((x) => x.bodies).filter(Boolean).join('\n');
@@ -276,6 +284,7 @@ export function statementsOf(cmd: string, cwd: string | null, ctx: Ctx): Stateme
           const compound = OPEN_KW.has(words(text)[0] ?? '') || /^[({!]/.test(text);
           const setup = st.setup ?? (env.length && compound ? `export ${env.join(' ')}` : null);
           if (env.length && !compound) text = `${env.join(' ')} ${text}`;
+          if (carry) text = `${carry} && ${text}`;
           const v = usesVar(text, new Set([...st.local].filter((n) => !st.vars.has(n))));
           if (hd?.step) blocked = 'runs a script written inline (a heredoc)';
           else if (text.includes('\n')) blocked = 'runs over more than one line';
@@ -327,6 +336,7 @@ export function statementsOf(cmd: string, cwd: string | null, ctx: Ctx): Stateme
           }
           continue;
         }
+        if (!bodies && !mixed && l !== units[units.length - 1] && l.pieces.length === 1 && venvActivate(head)) { flush(); carry = head; continue; }
         if (!bodies && SETUP.test(head)) { flush(); st.setup ??= head; continue; }
         if (w[0] === 'read') for (const x of w.slice(1)) if (/^[A-Za-z_]\w*$/.test(x)) st.local.add(x);
         const kind = bodies ? heredocKind(head, bodies, ctx.job).kind : callKind(head, ctx.job);
@@ -336,6 +346,8 @@ export function statementsOf(cmd: string, cwd: string | null, ctx: Ctx): Stateme
         emit([{ l, kind, guard, bodies }]);
       }
       flush();
+      // Later statements aren't chained to it: they need their shell set up, as before.
+      if (carry) st.setup ??= carry;
     }
   };
   const s = leadingCds(String(cmd ?? '').replace(/\\\r?\n[ \t]*/g, ' ')).rest;

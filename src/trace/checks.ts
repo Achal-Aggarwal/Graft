@@ -37,9 +37,15 @@ export const READ_ONLY_FAMILIES: ReadonlySet<CheckFamily> = new Set<CheckFamily>
  */
 export const HEAD_SHA = String.raw`\$\(\s*git\s+rev-parse\s+(?:--short(?:=\d+)?\s+|--verify\s+)?HEAD\s*\)`;
 
+/** Python's runners, through uv, poetry or pdm too: pytest, `python -m pytest|unittest`, tox, nox. */
+const PY_TESTS = /^(?:(?:uv|poetry|pdm) run (?:-- )?)?(?:pytest\b|python[\d.]* -m (?:pytest|unittest)\b)|^(?:tox|nox)(?=\s|$)/;
+/** A runner run from a venv or any other bin folder (`.venv/bin/pytest`, `/x/venv/bin/python3`): its folder goes before matching. */
+const BIN_DIR = /^(?:[^\s'"`$;|&()<>]*\/)?bin\/(?=(?:python[\d.]*|pytest|tox|nox)(?:\s|$))/;
+
 /** Anchored on a simple command after its env prefixes and wrappers. */
 const FAMILIES: Array<[CheckFamily, RegExp]> = [
-  ['tests', /^(?:npm (?:test|t)\b|npm run test[:\w-]*|pnpm (?:run )?test[:\w-]*|yarn (?:run )?test\b|bun test\b|npx (?:vitest|jest)\b|vitest run\b|jest\b|go test\b|pytest\b|python3? -m pytest\b|cargo test\b|node\b.*\s--test\b|make test[\w-]*)/],
+  ['tests', /^(?:npm (?:test|t)\b|npm run test[:\w-]*|pnpm (?:run )?test[:\w-]*|yarn (?:run )?test\b|bun test\b|npx (?:vitest|jest)\b|vitest run\b|jest\b|go test\b|cargo test\b|node\b.*\s--test\b|make test[\w-]*)/],
+  ['tests', PY_TESTS],
   ['tests', new RegExp(`^${BATS}`)], // D140
   ['npm-view', /^npm (?:view|v|info|show) (?!-)(\S+)/],
   ['deploy', new RegExp(String.raw`^gh api\b.*\/commits\/(?:([0-9a-f]{7,40})|${HEAD_SHA})\/(?:statuses|status|check-runs)\b|^(?:npx )?vercel (?:inspect|ls|list)\b|^(?:npx )?netlify (?:status|deploy:list)\b|^fly(?:ctl)? status\b|^kubectl rollout status\b`)],
@@ -67,7 +73,7 @@ function simpleFamily(cmd: string, job: JobClass | null): FamilyHit | null {
   const simple = simpleCommands(cmd);
   let push: FamilyHit | null = null;
   for (let i = simple.length - 1; i >= 0; i--) {
-    const bare = bareCommand(simple[i]!);
+    const bare = bareCommand(simple[i]!).replace(BIN_DIR, '');
     let hit: FamilyHit | null = null;
     for (const [family, re] of FAMILIES) {
       const m = re.exec(bare);
@@ -169,6 +175,8 @@ function testsPassed(text: string, piped: boolean): { passed: boolean; count?: n
     return { passed, count: num(/^\s*Tests:?\s+(?:\d+ \w+(?:,| \|) )*?(\d+) passed/m) };
   }
   if (/^[#ℹ]\s*(?:pass|fail) \d+/m.test(text)) return { passed: /^[#ℹ]\s*fail 0\b/m.test(text), count: num(/^[#ℹ]\s*pass (\d+)/m) };
+  // unittest: `Ran 4 tests in 0.002s`, then `OK` or `FAILED (failures=1)`.
+  if (/^Ran \d+ tests? in /m.test(text)) return { passed: /^OK\b/m.test(text) && !/^FAILED\b/m.test(text), count: num(/^Ran (\d+) tests? in /m) };
   if (/test result: /.test(text)) return { passed: /test result: ok\b/.test(text) && !/test result: FAILED/.test(text), count: num(/test result: ok\. (\d+) passed/) };
   if (/^(?:ok|FAIL|--- FAIL)\s/m.test(text)) return { passed: /^ok\s/m.test(text) && !/^(?:FAIL|--- FAIL|panic:)/m.test(text) };
   if (/\d+ (?:passed|failed|errors?)\b/.test(text)) return { passed: /\d+ passed/.test(text) && !/\b[1-9]\d* (?:failed|errors?)\b/.test(text), count: num(/(\d+) passed/) };

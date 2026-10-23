@@ -8,8 +8,8 @@
  */
 import type { CheckHit, JobClass, RunCall, RunSheet } from '../trace/types.js';
 import type { CompiledSkill, SkillStep } from './types.js';
-import { programOf } from '../trace/shell.js';
-import { factsFromCalls } from '../trace/checks.js';
+import { bareCommand, programOf, simpleCommands, stripOutputFilters } from '../trace/shell.js';
+import { callText, factsFromCalls } from '../trace/checks.js';
 import { flatLine } from '../notes/flatten.js';
 import { cleanLine } from '../trace/redact.js';
 import { STABLE_BRANCHES } from './params.js';
@@ -59,12 +59,58 @@ const REGISTRIES: Array<[RegExp, string, string]> = [
   [/\bgem\s+push\b/, 'gem', 'RubyGems'],
 ];
 
+/** Remotes named for where a deploy goes: a push to one goes there, whatever branch it names (`git push prod HEAD:main`). */
+const DEPLOY_REMOTES: ReadonlySet<string> = new Set(['prod', 'production', 'staging', 'live']);
+/** The places a person names for a ship ("ship it to prod"), as the job's words have them. */
+const SAID_PLACES = ['beta', 'staging', 'prod'];
+
+/** The remote of one simple `git push`, when it is named for a deploy target; else null. */
+function deployRemote(simple: string): string | null {
+  const w = bareCommand(simple).split(/\s+/);
+  if (w[0] !== 'git') return null;
+  let i = 1;
+  while (i < w.length && w[i] !== 'push') i += /^-[Cc]$|^--(?:git-dir|work-tree|namespace)$/.test(w[i]!) ? 2 : 1;
+  for (i++; i < w.length; i++) {
+    const a = w[i]!;
+    if (a === '-o' || a === '--push-option' || a === '--repo') { i++; continue; }
+    if (a.startsWith('-')) continue;
+    const remote = a.replace(/^['"]|['"]$/g, '');
+    return DEPLOY_REMOTES.has(remote) ? remote : null;
+  }
+  return null;
+}
+
 /** Stable branches pushed, in order, from the calls the steps came from (`push origin beta` then `beta:prod` too). */
+const pushedStable = (calls: RunCall[]) => factsFromCalls(calls.filter((c) => !c.failed), {}).pushedBranches.filter((b) => STABLE_BRANCHES.has(b));
+
+/**
+ * Where the calls the steps came from shipped to, in order: a remote named for a deploy target (`git push prod
+ * HEAD:main` goes to prod), else the stable branch pushed (`push origin beta` then `beta:prod` too).
+ */
 export function stableBranches(calls: RunCall[], jobWords: string[]): string[] {
-  const pushed = factsFromCalls(calls.filter((c) => !c.failed), {}).pushedBranches.filter((b) => STABLE_BRANCHES.has(b));
-  const out = [...new Set(pushed)];
+  const out: string[] = [];
+  for (const c of calls) {
+    if (c.failed) continue;
+    for (const simple of simpleCommands(stripOutputFilters(callText(c)))) {
+      const remote = deployRemote(simple);
+      for (const b of remote ? [remote] : pushedStable([{ ...c, cmd: simple, parts: undefined }])) if (!out.includes(b)) out.push(b);
+    }
+  }
   if (out.length) return out;
-  return ['beta', 'staging', 'prod'].filter((b) => jobWords.includes(b));
+  return SAID_PLACES.filter((b) => jobWords.includes(b));
+}
+
+/**
+ * Asks for the places a ship skill goes that its name leaves out: the branch a push to a deploy remote named
+ * (`push to main`), and the places the person named when it was saved (`ship to prod`), so the asks it was saved
+ * from bring it back.
+ */
+function otherPlaces(targets: string[], calls: RunCall[], jobWords: string[]): string[] {
+  const same = (a: string, b: string) => a === b || ([a, b].every((x) => x === 'prod' || x === 'production'));
+  const out: string[] = [];
+  for (const b of pushedStable(calls)) if (!targets.some((t) => same(t, b))) out.push(`push to ${b}`);
+  for (const p of SAID_PLACES) if (jobWords.includes(p) && !targets.some((t) => same(t, p))) out.push(`ship to ${p}`);
+  return [...new Set(out)];
 }
 
 /** The program the null-job name and title come from: the first step that isn't a wait. */
@@ -143,19 +189,21 @@ export function jobWords(sheet: RunSheet, steps: SkillStep[], extra: { calls?: R
     return { base: `release-${reg[1]}`, title: `Release ${repo} to ${reg[2]}`, lead: `Publishes ${repo} to ${reg[2]}`, asks: [...asks, `ship to ${reg[1]}`], statusAsks: ['is it published', 'did it publish'], dontUse: 'Pre-releases, or packages other than the ones above.' };
   }
   if (job === 'ship') {
-    const b = stableBranches(extra.calls ?? steps.map((s, i) => ({ id: `s${i}`, cmd: s.cmd, failed: false }) as RunCall), sheet.jobWords);
+    const calls = extra.calls ?? steps.map((s, i) => ({ id: `s${i}`, cmd: s.cmd, failed: false }) as RunCall);
+    const b = stableBranches(calls, sheet.jobWords);
+    const also = otherPlaces(b, calls, sheet.jobWords);
     const dontUse = 'Pushes to other branches, or other repos.';
     if (b.length >= 2) {
       const [b1, b2] = [b[0]!, b[b.length - 1]!];
       return {
         base: `ship-${b1}-then-${b2}`, title: `Ship ${repo}: ${b1}, then ${b2}`, lead: `Ships ${repo} to ${b1}, then fast-forwards ${b2}`,
-        asks: [`push to ${b1}`, `ff to ${b2}`, `fast-forward ${b2}`, `promote to ${b2}`, `deploy to ${b2}`, `update ${b2}`, 'ship it'],
+        asks: [`push to ${b1}`, `ff to ${b2}`, `fast-forward ${b2}`, `promote to ${b2}`, `deploy to ${b2}`, `update ${b2}`, ...also, 'ship it'],
         statusAsks: ['is it live', `is ${b2} updated`, 'did it deploy'], dontUse,
       };
     }
     if (b.length === 1) {
       const one = b[0]!;
-      return { base: `ship-${one}`, title: `Ship ${repo} to ${one}`, lead: `Ships ${repo} to ${one}`, asks: [`push to ${one}`, `deploy to ${one}`, `update ${one}`, 'ship it'], statusAsks: ['is it live', `is ${one} updated`, 'did it deploy'], dontUse };
+      return { base: `ship-${one}`, title: `Ship ${repo} to ${one}`, lead: `Ships ${repo} to ${one}`, asks: [`push to ${one}`, `deploy to ${one}`, `update ${one}`, ...also, 'ship it'], statusAsks: ['is it live', `is ${one} updated`, 'did it deploy'], dontUse };
     }
     return { base: 'ship', title: `Ship ${repo}`, lead: `Ships ${repo}`, asks: ['ship it', 'deploy it'], statusAsks: ['is it live', 'did it deploy'], dontUse };
   }
