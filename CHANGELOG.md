@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.25.0
+
+### Added
+
+- **Skills, on by default.** When you do the same job on a few different days
+  (a release, a deploy, test and lint before a commit), Trail offers once to
+  save it as a skill. It saves only when you type yes. The next time you ask
+  for that job, your agent gets the exact steps you used. A step that can't be
+  undone, like a push to prod, asks you first.
+- **Lessons on a skill.** When you correct a run ("you skipped lint"), Trail
+  offers to add that to the skill, so the next run does it.
+- **Guardrails.** A command you've said never to run is stopped before it runs.
+- **`trail init` looks back** through your own past sessions in the repo, finds
+  what came up on two or more days (preferences, guardrails, repeated jobs) and
+  lists them for you to keep. Nothing is kept unless you pick it. No model call.
+- **Known error fixes.** When a command fails the way it failed before, your
+  agent gets the fix that worked last time.
+- **One install, all your repos.** After `trail init --pair` connects the
+  first repo, the Trail page lists the other repos Claude Code ran in on this
+  laptop (names only, never paths). Tick the ones you want and each is set up
+  and added to your workspace.
+- **Skills go up as folders.** A repo skill reaches Trail with the files it
+  points to (references, scripts, templates), not just its steps.
+- **Skill runs from your coding agent.** When Claude Code uses one of the
+  repo's skills (on its own, or because you typed `/name`), the Skills page
+  counts it as a run. Only the skill's name is sent, never the task.
+- The token card on the Trail page measures your last merged PR, not one
+  lookup.
+
+### Changed
+
+- Learnings and skills don't repeat each other. Each hook gives your agent one
+  answer, and at the end of a turn the skill offer comes before the ask to save
+  a learning.
+- `trail init --pair` lists the skills init found on the Trail page by name and
+  day count, marked as kept on this machine. Their steps stay on your machine.
+- `--server <url>` is the only way to point Trail at a self-hosted server;
+  `TRAIL_URL` is no longer read.
+- Uploads send only learnings committed at HEAD, and only the current repo.
+- A learning or skill deleted at HEAD comes down from Trail at the next sync.
+  Switching branches never takes anything down.
+- Learnings, skill runs and searches sync at the end of each turn, not only
+  when a session starts.
+
+### Fixed
+
+- Python test runs count as tests: `.venv/bin/pytest`, `uv run`, `poetry run`,
+  `tox`, `nox` and `python -m unittest`.
+- The ask to save a learning comes once per fail-then-pass, not again on every
+  rerun.
+- A long preference is kept whole; only its title is shortened.
+- Codex users are always told to trust Trail's hooks in `/hooks`.
+- Windows: sessions in a git worktree are found as the repo's, and paths in
+  shell edits, skill steps and the `cp` line read correctly.
+- `trail grep` refuses a pattern whose repeat repeats inside it, like `(a+)+`,
+  which could hang the search on one long line.
+- Windows: a skill update no longer fails while another process lets go of
+  the skills lock.
+
 ## 0.24.1
 
 ### Added
