@@ -279,6 +279,21 @@ export function addRepo(c: Cloud, repo: { key: string; name: string }, fetchImpl
   return authed<{ repos: WorkspaceRepo[] }>(c, "POST", "/api/cli/repos", repo, { fetchImpl });
 }
 
+/** The laptop's other repos, by name only, for the onboarding page to offer. */
+export function sendMachineRepos(c: Cloud, state: string, repos: { key: string; name: string; last_used?: string; sessions: number }[], fetchImpl?: Fetch): Promise<object | ApiError> {
+  return authed<object>(c, "POST", "/api/cli/handoffs/repos", { state, repos }, { fetchImpl });
+}
+
+/** Which of them the person picked: null until they choose. */
+export function fetchMachinePicks(c: Cloud, state: string, fetchImpl?: Fetch): Promise<{ picks: string[] | null } | ApiError> {
+  return authed<{ picks: string[] | null }>(c, "POST", "/api/cli/handoffs/picks", { state }, { fetchImpl });
+}
+
+/** How setting up one picked repo is going, for the page. */
+export function postRepoSetup(c: Cloud, state: string, key: string, status: "setting_up" | "done" | "failed", learnings = 0, fetchImpl?: Fetch): Promise<object | ApiError> {
+  return authed<object>(c, "POST", "/api/cli/handoffs/repos/status", { state, key, status, learnings }, { fetchImpl });
+}
+
 export interface UploadedLearning {
   /** `.trail/learnings/<name>`, or `.claude/skills/<name>/SKILL.md` for a skill. */
   path: string;
