@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BRAND_ENV } from '../src/brand.js';
 import { notesOnTouch } from '../src/claude/format.js';
-import { main } from '../src/claude/hooks.js';
+import { main, withTouchLearnings } from '../src/claude/hooks.js';
 import type { SessionState } from '../src/claude/state.js';
 import { writeNote, type Note } from '../src/notes/notes.js';
 
@@ -50,7 +50,8 @@ test('standing learnings are left to the session-start list, and two at most com
 async function hook(event: string, input: object): Promise<string> {
   let out = '';
   const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => ((out += String(chunk)), true)) as typeof process.stdout.write;
+  // Only the hook's strings: the test runner's own reports pass through, as the other hook tests do.
+  process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => (typeof chunk === 'string' ? ((out += chunk), true) : (write as (...a: unknown[]) => boolean)(chunk, ...rest))) as typeof process.stdout.write;
   process.env.GRAFT_TEST_STDIN = JSON.stringify(input);
   try {
     await main(event);
@@ -77,4 +78,21 @@ test('the Read hook puts a committed learning in front of the agent', async () =
   assert.equal(await hook('tool-savings', { session_id: 't1', tool_name: 'Read', tool_input: { file_path: join(d, 'tool', 'workspace.py') }, tool_response: 'x' }), '', 'once a session');
   assert.equal(await hook('tool-savings', { session_id: 't2', tool_name: 'Bash', tool_input: { command: 'trail skeleton tool/workspace.py' }, tool_response: 'x' }), '', "trail's own output already carries it");
   assert.match(await hook('tool-savings', { session_id: 't3', tool_name: 'Bash', tool_input: { command: 'sed -n 1,80p tool/workspace.py' }, tool_response: 'x' }), /Take workspace/);
+});
+
+test("a Bash call's learnings join the skills part's context in one answer, and a block stays the whole answer", () => {
+  process.env.TRAIL_HOME = mkdtempSync(join(tmpdir(), 'touch-home-'));
+  process.env[BRAND_ENV] = 'trail';
+  const d = mkdtempSync(join(tmpdir(), 'touch-repo-'));
+  spawnSync('git', ['init', '-q'], { cwd: d });
+  mkdirSync(join(d, 'graft', '.cache', 'session'), { recursive: true });
+  writeNote(d, { title: 'Take workspace from server-held data', body: BODY, author: 'Priya', date: '2026-10-07', touches: ['tool/workspace.py'] }, 'repo');
+  const bash = (session_id: string) => ({ session_id, tool_name: 'Bash', tool_input: { command: 'cat tool/workspace.py' } });
+
+  const held = withTouchLearnings({ block: 'stop here' }, bash('m1'), d);
+  assert.deepEqual(held, { block: 'stop here' });
+  const merged = withTouchLearnings({ context: 'skills context', notice: 'for the person' }, bash('m1'), d);
+  assert.equal(merged.notice, 'for the person');
+  assert.match(merged.context ?? '', /^skills context\n\n.*Take workspace from server-held data/s, 'not used up by the block');
+  assert.match(withTouchLearnings({}, bash('m2'), d).context ?? '', /Take workspace/);
 });

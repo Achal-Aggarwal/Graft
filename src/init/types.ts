@@ -10,7 +10,7 @@
 import type { CompiledSkill } from '../skills/types.js';
 import type { WallClass } from '../trace/types.js';
 
-export type InitKind = 'skill' | 'guardrail' | 'preference' | 'review';
+export type InitKind = 'skill' | 'guardrail' | 'preference' | 'review' | 'claude';
 
 /** A pointer to a typed line. The line itself is never stored (0 rule 6). */
 export interface TypedRef {
@@ -48,6 +48,8 @@ export interface InitCandidate {
   pref?: { refs: TypedRef[] };
   /** D24 items, unchanged from phase 0. */
   review?: { prs: number[] };
+  /** #662: the Claude Code memory note a team row came from. */
+  memory?: { path: string };
   /** Counted words for the screen, e.g. 'your how-to release-notes.md describes it'. */
   evidence: string[];
   rank: number;

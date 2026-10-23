@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpRepo } from "./helpers.js";
 import {
-  DEFAULT_SETTINGS, isTestHome, labInteractive, localDate, noteGovernor, offersHere, pauseRepo, readSettings, setOffers, setSkillOff, setSkills, skillsOn, trailNow,
+  DEFAULT_SETTINGS, isTestHome, labInteractive, localDate, noteGovernor, noteSkillsStarted, offersHere, pauseRepo, readSettings, setOffers, setSkillOff, setSkills, skillsOn, trailNow,
 } from "../src/skills/settings.js";
 import { withLock } from "../src/util/private-fs.js";
 
@@ -29,10 +29,10 @@ test("re-exports the test-home answers", () => {
   assert.equal(typeof labInteractive, "function");
 });
 
-test("defaults on a missing or broken file, and a copy each time", () => {
+test("defaults on a missing or broken file, and a copy each time: skills on", () => {
   const { env, file } = sandbox();
   assert.deepEqual(DEFAULT_SETTINGS, {
-    v: 1, skills: "off", onSince: null, offers: "on", offersOffAt: null, offRepos: [], pausedUntil: {},
+    v: 1, skills: "on", onSince: null, offers: "on", offersOffAt: null, offRepos: [], pausedUntil: {},
     skillsOff: [], lastNine: [], governorSaidAt: null,
   });
   assert.deepEqual(readSettings(env), DEFAULT_SETTINGS);
@@ -44,7 +44,32 @@ test("defaults on a missing or broken file, and a copy each time", () => {
     writeFileSync(file, bad);
     assert.deepEqual(readSettings(env), DEFAULT_SETTINGS, bad);
   }
-  assert.equal(skillsOn(env), false);
+  assert.equal(skillsOn(env), true, "on by default");
+});
+
+test("only skills: off in the file turns them off", () => {
+  const { env, file } = sandbox();
+  mkdirSync(join(file, ".."), { recursive: true });
+  for (const [skills, on] of [["off", false], ["on", true], [undefined, true], ["no", true]] as const) {
+    writeFileSync(file, JSON.stringify({ v: 1, skills }));
+    assert.equal(skillsOn(env), on, String(skills));
+  }
+});
+
+test("noteSkillsStarted dates skills on by default once, and never turns them on or off", () => {
+  const { env, file } = sandbox();
+  const t1 = new Date("2026-10-20T09:12:00Z");
+  noteSkillsStarted(env, t1);
+  assert.equal(readSettings(env).onSince, t1.toISOString(), "the first session start with skills on dates them");
+  noteSkillsStarted(env, new Date("2026-10-27T09:00:00Z"));
+  assert.equal(readSettings(env).onSince, t1.toISOString(), "once");
+  const off = sandbox();
+  mkdirSync(join(off.file, ".."), { recursive: true });
+  writeFileSync(off.file, JSON.stringify({ v: 1, skills: "off" }));
+  const before = readFileSync(off.file, "utf8");
+  noteSkillsStarted(off.env, t1);
+  assert.equal(readFileSync(off.file, "utf8"), before, "skills off: nothing written");
+  assert.equal(onDisk(file).skills, "on");
 });
 
 test("a field of the wrong shape falls back to its default; the rest is read", () => {
@@ -52,7 +77,7 @@ test("a field of the wrong shape falls back to its default; the rest is read", (
   mkdirSync(join(file, ".."), { recursive: true });
   writeFileSync(file, JSON.stringify({ v: 1, skills: "yes", offers: "off", offRepos: "x", pausedUntil: { a: "2026-11-10", b: 3 }, skillsOff: ["a", 2], lastNine: ["yes", "maybe", "no"] }));
   const s = readSettings(env);
-  assert.equal(s.skills, "off");
+  assert.equal(s.skills, "on", "not \"off\", so the default");
   assert.equal(s.offers, "off");
   assert.deepEqual(s.offRepos, []);
   assert.deepEqual(s.pausedUntil, { a: "2026-11-10" });

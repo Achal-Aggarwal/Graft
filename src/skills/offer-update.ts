@@ -122,11 +122,13 @@ export function updateOfferDue(i: OfferInput): OfferDue | { due: false; why: Why
   const r = i.plan.replan(skillId, run.id, plan.op, env, o);
   if (!r || (r.plan && r.plan.op !== plan.op)) return { due: false, why: 'replan' };
   const vals = block.params ?? {};
-  const cmds = plan.op === 'update' ? [fillParams(plan.cmd.cmd, vals)] : plan.cmds.map((c) => fillParams(c.cmd, vals));
+  const more = plan.op === 'update' && plan.why === 'preference' ? plan.more ?? [] : [];
+  const cmds = plan.op === 'update' ? [plan.cmd, ...more].map((c) => fillParams(c.cmd, vals)) : plan.cmds.map((c) => fillParams(c.cmd, vals));
   const lessonIds = plan.op === 'extend' && plan.why === 'lesson' ? plan.lessonIds : [];
   const lessonDate = fi.lessons.find((l) => lessonIds.includes(l.id))?.at;
   const lines = updateLines({
-    op: plan.op, why: plan.why, check, name: ref.name, job: run.job ?? skill.meta.job ?? 'job', at: plan.op === 'update' ? plan.step : plan.at,
+    op: plan.op, why: plan.why, ...(plan.op === 'update' && plan.why === 'preference' ? { follows: plan.follows, steps: [plan.step, ...more.map((c) => c.n)] } : {}),
+    check, name: ref.name, job: run.job ?? skill.meta.job ?? 'job', at: plan.op === 'update' ? plan.step : plan.at,
     cmds, changes: runLinesChanged(r.base, r.next), ...(lessonDate ? { lessonDate } : {}), handEdited: r.handEdited,
   });
   return {

@@ -17,6 +17,8 @@ import { basename, dirname, join } from 'node:path';
 /** A read-only descriptor of a plain file, or a throw. `follow`: a link to a plain file is allowed. */
 export function openPlain(path: string, opts: { follow?: boolean } = {}): number {
   const flags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (opts.follow ? 0 : constants.O_NOFOLLOW ?? 0);
+  // Windows has no O_NOFOLLOW, and open follows a link there: refuse one seen before the open.
+  if (!opts.follow && constants.O_NOFOLLOW === undefined && lstatSync(path).isSymbolicLink()) throw new Error('a link');
   const fd = openSync(path, flags);
   try {
     if (!fstatSync(fd).isFile()) throw new Error('not a plain file');

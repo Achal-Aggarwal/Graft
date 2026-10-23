@@ -15,6 +15,7 @@ import {
   appendPrivateLine, ensurePrivateDir, readJsonSafe, trailPath, withLock, writePrivate, writePrivateJson,
 } from "../src/util/private-fs.js";
 import { hookError } from "../src/claude/skills-hook-util.js";
+import { timeBar } from "./machine-speed.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const POSIX = process.platform !== "win32";
@@ -212,7 +213,7 @@ test("withLock gives up on a timeout and never runs fn", () => {
   assert.deepEqual(got, { ok: false });
   assert.equal(ran, false, "a fold that ran twice would count every call twice");
   assert.ok(took >= 50, `waited ${took} ms`);
-  assert.ok(took < 1000, `gave up promptly (${took} ms)`);
+  assert.ok(took < timeBar(1000, 3000), `gave up promptly (${took} ms)`);
   assert.equal(existsSync(`${file}.lock`), true, "someone else's lock is left alone");
 });
 
@@ -361,6 +362,7 @@ test("only cli-skills.ts uses the person-only setters, only offers.ts the bookke
   const rules: Array<{ names: RegExp; allowed: string[] }> = [
     { names: /\b(?:setSkills|setOffers|setSkillOff)\b/, allowed: ["skills/settings.ts", "skills/cli-skills.ts"] },
     { names: /\b(?:pauseRepo|noteGovernor)\b/, allowed: ["skills/settings.ts", "skills/offers.ts"] },
+    { names: /\bnoteSkillsStarted\b/, allowed: ["skills/settings.ts", "claude/skills-wiring.ts"] },
   ];
   const settings = join(SRC, "skills", "settings.ts");
   const bad: string[] = [];

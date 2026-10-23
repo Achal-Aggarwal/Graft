@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
+import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { exists, readSmall } from './anchors-git.js';
 import { readPlain } from '../init/plain-file.js';
 import { trailPath, writePrivate } from '../util/private-fs.js';
@@ -35,6 +35,12 @@ export interface Cli { prog: string; pkgDir: string; target: string }
 const inside = (top: string, p: string) => p === top || p.startsWith(top + sep);
 const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
+/**
+ * A bin target or a `node <file>` word as one form: forward slashes, normalized, no `./`. `dist/cli.js` on every
+ * platform, as package.json and the shell write it; `path.normalize` would make it `dist\cli.js` on Windows.
+ */
+export const binTarget = (p: string): string => posix.normalize(p.replace(/\\/g, '/')).replace(/^\.\//, '');
+
 /** The bins of the nearest package.json from the step's folder up to the checkout: name to target. null when none or unreadable. */
 export function binsNear(checkout: string, dir: string): { pkgDir: string; bins: Map<string, string> } | null {
   const top = resolve(checkout);
@@ -50,7 +56,7 @@ export function binsNear(checkout: string, dir: string): { pkgDir: string; bins:
       else if (pkg?.bin && typeof pkg.bin === 'object') {
         for (const [k, v] of Object.entries(pkg.bin as Record<string, unknown>)) if (typeof v === 'string') bins.set(k, v);
       }
-      for (const [k, v] of bins) bins.set(k, normalize(v).replace(/^\.\//, ''));
+      for (const [k, v] of bins) bins.set(k, binTarget(v));
       return bins.size ? { pkgDir: d, bins } : null;
     }
     if (d === top) return null;

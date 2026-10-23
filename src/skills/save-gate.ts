@@ -39,6 +39,7 @@ import { DENY, isSplitOffer, tamperDeny, verifySave, type SaveVerdict } from './
 import { heldRunId, nameTaken, readSkillsStateSafe } from './save-store.js';
 import { hookError } from '../claude/skills-hook-util.js';
 import { codexSandboxRefusal } from './codex-sandbox.js';
+import { stepLearnings } from './follow-learnings.js';
 
 export { parseSkillsAdd, parseSkillsLesson, SAVE_GATE_RE, SKILLS_ADD_RE, SKILLS_LESSON_RE, type SkillsAddCmd, type SkillsLessonCmd } from './save-parse.js';
 export { DENY, verifySave, type SaveVerdict } from './save-verify.js';
@@ -214,9 +215,11 @@ export function savedLines(c: CompiledSkill, n: number, endedAt: string, asked: 
   const count = apart ? `${steps(n - 1)} and its check` : steps(n);
   const later = asked === 'repo' ? ' Saving it for the whole repo comes later, so for now it\'s just yours.'
     : asked === 'team' ? ' Saving it for the team comes later, so for now it\'s just yours.' : '';
+  // Part 7: steps that follow the person's learnings rather than the run, said in the same one line.
+  const follow = c.followed ? ` ${flatLine(c.followed, 400)}` : '';
   return [
-    `✓ saved ${name}, ${where} · ${count}, each one ran here ${when}`,
-    `Tell the person what Trail kept: Saved ${name}, ${where}: ${count}, each one ran here ${when}. Next time you ask ${ask}, I start from them.${later} See them: trail skills show ${name} · undo: trail forget ${name}`,
+    `✓ saved ${name}, ${where} · ${count}, each one ran here ${when}${follow ? ` ·${follow}` : ''}`,
+    `Tell the person what Trail kept: Saved ${name}, ${where}: ${count}, each one ran here ${when}.${follow} Next time you ask ${ask}, I start from them.${later} See them: trail skills show ${name} · undo: trail forget ${name}`,
   ];
 }
 
@@ -264,6 +267,7 @@ function holdUnbacked(cmd: SkillsAddCmd, env: NodeJS.ProcessEnv, now: Date, why:
   const c = compileRun(sheet, {
     repoRoot: root, home: env.HOME || homedir(), platform: process.platform, now,
     readSheet: (id) => readRunSheet(id, env), name: cmd.name, moment: 'asked', applies: sheet.repoKey, taken: (n) => n !== cmd.name && nameTaken(n, scope) !== null,
+    learnings: stepLearnings({ repoKeys: [sheet.repoKey], checkout: root, env }),
   });
   if (!c.ok) return fail(`trail · not saved: ${refusalWords(c.reason, c.detail)}.`);
   try {

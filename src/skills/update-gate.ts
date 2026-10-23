@@ -247,7 +247,8 @@ function updateInTranscript(r: UpdateReceipt, name: string, offerId: string, cal
 function shown(p: string, env: NodeJS.ProcessEnv): string {
   const home = env.HOME || homedir();
   const rel = home && isAbsolute(p) ? relative(home, p) : '';
-  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel.split(sep).join('/')}` : p;
+  // Forward slashes either way: the person pastes it into Git Bash or PowerShell on Windows, and both take them.
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel.split(sep).join('/')}` : p.split(sep).join('/');
 }
 
 /** What changed, in words: `step 4 is now '…'`, `step 5 added: '…'`, `the 4 steps that just worked replace the old ones`. */

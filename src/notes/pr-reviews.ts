@@ -28,7 +28,7 @@ import { join } from "node:path";
 import { countBucket, durationBucket } from "../telemetry/contract.js";
 import { track } from "../telemetry/track.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
-import { askClaude, claudeBin, COLD_START_MODEL, norm, placeQuotes, scrub, type QuoteSource } from "./cold-start.js";
+import { callClaude, claudeBin, COLD_START_MODEL, norm, placeQuotes, scrub, type ClaudeFailure, type QuoteSource } from "./cold-start.js";
 import { noteAuthor } from "./git-facts.js";
 import { ensureRepoHome } from "./home.js";
 import { listNotes, shortDate, writeNote, type Note } from "./notes.js";
@@ -76,6 +76,9 @@ export interface ReviewResult {
   costUsd?: number;
   /** Why nothing came back, when nothing did. `no_gh`: no `gh`, not signed in, or GitHub didn't answer. */
   reason?: "no_gh" | "no_reviews" | "no_claude" | "failed" | "none_found";
+  /** Why Claude Code gave no answer, for `no_claude` and `failed`. */
+  why?: ClaudeFailure;
+  said?: string;
 }
 
 /** The last 50 merged PRs: enough to see a pattern, one call. */
@@ -352,10 +355,10 @@ export async function findReviewLearnings(
   base.reviewed = prs.length;
   if (!prs.length) return { ...base, durationMs: Date.now() - started, reason: "no_reviews" };
   const bin = claudeBin();
-  if (!bin) return { ...base, durationMs: Date.now() - started, reason: "no_claude" };
+  if (!bin) return { ...base, durationMs: Date.now() - started, reason: "no_claude", why: "not_installed" };
   const { text, read } = reviewDigest(prs);
   base.read = read.length;
-  const asked = await askClaude<RawReviewFinding>(
+  const asked = await callClaude<RawReviewFinding>(
     bin,
     `Inline review comments on this repository's recently merged PRs that the author acted on, newest first, each after the code it was left on. Find the rules about this codebase a newcomer would get wrong.\n\n${text}`,
     model,
@@ -363,7 +366,7 @@ export async function findReviewLearnings(
     { system: SYSTEM, schema: SCHEMA },
   );
   const durationMs = Date.now() - started;
-  if (!asked) return { ...base, durationMs, reason: "failed" };
+  if (!asked.ok) return { ...base, durationMs, reason: asked.why === "not_installed" ? "no_claude" : "failed", why: asked.why, ...(asked.said ? { said: asked.said } : {}) };
   const findings = verifyReviews(asked.findings, read).slice(0, opts.limit ?? 5);
   return { ...base, findings, durationMs, costUsd: asked.costUsd, reason: findings.length ? undefined : "none_found" };
 }
@@ -483,6 +486,7 @@ export function saveReviewFindings(repo: string, findings: ReviewFinding[], auth
         body: `${f.body.trim()}\n\n_From review on ${f.prs.map((n) => `#${n}`).join(", ")} here, merged ${shortDate(f.last)}._`,
         touches: f.touches ?? codeAnchors(repo, f.body, f.paths),
         standing: true,
+        src: "init-review",
       },
       "repo",
     ),
