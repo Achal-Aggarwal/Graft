@@ -1469,8 +1469,9 @@ function toTokens(chars: number): number {
   return Math.round(chars / 4);
 }
 
-/** Render an {@link AskResult} as a compact markdown context pack. */
-export function formatAsk(r: AskResult): string {
+/** The rendered pack, before the savings header: `body` when there are hits to
+ * show, or the finished `text` when there are none (no savings line then). */
+function renderAsk(r: AskResult): { body: string } | { text: string } {
   const head = `${cmd("graft ask")} — "${r.query}"  (${r.mode})`;
   // The note prints as its own prominent line(s) right under the header —
   // above every hit — so a loud structural-fallthrough note (or the
@@ -1497,8 +1498,8 @@ export function formatAsk(r: AskResult): string {
   if (learned) teamNotes.push(learned, "");
   if (r.notesHint) teamNotes.push(r.notesHint, "");
   if (r.hits.length === 0) {
-    if (r.notes?.length) return `${head}\n\n${teamNotes.join("\n").trimEnd()}\n\n${noteBlock || "no code matches."}${escalationNudge(r)}\n`;
-    return `${head}\n\n${noteBlock || "no matches."}${escalationNudge(r)}\n`;
+    if (r.notes?.length) return { text: `${head}\n\n${teamNotes.join("\n").trimEnd()}\n\n${noteBlock || "no code matches."}${escalationNudge(r)}\n` };
+    return { text: `${head}\n\n${noteBlock || "no matches."}${escalationNudge(r)}\n` };
   }
   const lines = noteBlock ? [head, "", noteBlock, "", ...teamNotes] : [head, "", ...teamNotes];
   if (r.mode === "structural") {
@@ -1521,9 +1522,33 @@ export function formatAsk(r: AskResult): string {
     });
     lines.push(...scopeFooterLines(r));
   }
-  const body = lines.join("\n").trimEnd();
-  const savings = askSavingsLine(r, body);
-  return (savings ? `${savings}\n\n${body}` : body) + escalationNudge(r) + "\n";
+  return { body: lines.join("\n").trimEnd() };
+}
+
+/** Render an {@link AskResult} as a compact markdown context pack. */
+export function formatAsk(r: AskResult): string {
+  return formatAskWithSaved(r).text;
+}
+
+/** {@link formatAsk}, plus the tokens its pack saved (what {@link askSavedTokens} says), from the one render. */
+export function formatAskWithSaved(r: AskResult): { text: string; savedTokens: number } {
+  const out = renderAsk(r);
+  if ("text" in out) return { text: out.text, savedTokens: 0 };
+  const savings = askSavingsLine(r, out.body);
+  return { text: (savings ? `${savings}\n\n${out.body}` : out.body) + escalationNudge(r) + "\n", savedTokens: savedTokens(r, out.body) };
+}
+
+/** Tokens this lookup's pack saved against reading the files it covers whole:
+ * the number `formatAsk` prints as "tokens saved ≈ N", or 0 when it prints none. */
+export function askSavedTokens(r: AskResult): number {
+  const out = renderAsk(r);
+  return "body" in out ? savedTokens(r, out.body) : 0;
+}
+
+/** Baseline tokens minus pack tokens, or 0 when there is no estimate or no saving to claim. */
+function savedTokens(r: AskResult, body: string): number {
+  if (!r.saved || r.saved.baselineChars <= 0) return 0;
+  return Math.max(0, toTokens(r.saved.baselineChars) - toTokens(body.length));
 }
 
 /** When a lexical `ask` returns thin/no results, the productive next move is a
@@ -1546,11 +1571,10 @@ function escalationNudge(r: AskResult): string {
  * Header, not footer, for the reason documented on `withSavings`: a trailing
  * line dies to `head -N` and to host output truncation. */
 function askSavingsLine(r: AskResult, body: string): string {
-  if (!r.saved || r.saved.baselineChars <= 0) return "";
+  const saved = savedTokens(r, body);
+  if (saved <= 0 || !r.saved) return ""; // no saving to claim (tiny files); stay quiet
   const pack = toTokens(body.length);
   const base = toTokens(r.saved.baselineChars);
-  if (base <= pack) return ""; // no saving to claim (tiny files); stay quiet
-  const saved = base - pack;
   const pct = Math.round((saved / base) * 100);
   return (
     `${tag()} tokens saved ≈ ${saved.toLocaleString()} (${pct}%) — this pack ≈ ` +

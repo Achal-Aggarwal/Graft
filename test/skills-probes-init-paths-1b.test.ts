@@ -66,7 +66,14 @@ const WIRING: Record<string, string> = {
 let tick = 0;
 /** One clean probe, past the 10-minute cache each time. */
 function clean(b: { repo: string; env: NodeJS.ProcessEnv }) {
-  return runProbes(cand(shipSkill({ ready: "git status --porcelain" })).skill, b.repo, new Date(NOW.getTime() + ++tick * 11 * 60_000), b.env)[0];
+  const at = new Date(NOW.getTime() + ++tick * 11 * 60_000);
+  // A slow git (a shared Windows runner) can run past the probes' 300 ms and return nothing; nothing is cached
+  // then, so the same probe at the same instant is simply asked again.
+  for (let k = 0; k < 5; k++) {
+    const r = runProbes(cand(shipSkill({ ready: "git status --porcelain" })).skill, b.repo, at, b.env)[0];
+    if (r) return r;
+  }
+  return undefined;
 }
 
 test("right after init, the paths it recorded read clean: a first init's untracked folders and a changed tracked file", () => {

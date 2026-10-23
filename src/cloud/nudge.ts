@@ -155,6 +155,8 @@ export function cloudLines(repo: string, opts: NudgeOptions): string[] {
         writeState({ linked: undefined }, env);
         return connectedLines(st.linked, agent);
       }
+      // Connected from the onboarding: only summaries go up, so there's no repo to add.
+      if (cloud.via === "connect") return [];
       return addRepoLines(repo, cloud.workspace.name, cloud.repos, st, agent, env, now);
     }
 

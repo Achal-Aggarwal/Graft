@@ -140,6 +140,9 @@ test("an agent's init looks back without a model and relays: a claude stand-in o
     assert.match(out, /^3\. "always run the lint script before pushing" \(preference, your own words\) · You said this on 2 days · just for you, in this repo$/m, "the shortest of the person's lines");
     const rec = readInitRecord(repoPlace(w.repo, env).key, env);
     assert.deepEqual(rec.pending.map((p) => [p.n, p.kind]), [[1, "skill"], [2, "guardrail"], [3, "preference"]]);
+    // For init --pair's page: the skill found, by name and day count, never its steps; nothing kept.
+    assert.deepEqual(r.skills?.map((s) => [s.name, s.title, s.days]), [["release-npm", "release-npm", 3]]);
+    assert.doesNotMatch(JSON.stringify(r.skills), /npm publish|npm run build/);
     assert.equal(rec.runs[0]!.by, "agent");
     assert.equal(rec.runs[0]!.modelWhy, "agent");
     for (const t of texts(w.trail)) for (const words of [PREF, "before pushing", "lint script", "npm publish", "npm run build", "time box"]) assert.ok(!t.includes(words), `no "${words}" on disk`);

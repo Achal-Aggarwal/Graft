@@ -12,6 +12,7 @@ import { runningVersion } from '../upkeep.js';
 import { maybeFlushInBackground, track } from '../telemetry/index.js';
 import { brand, inBrand } from '../brand.js';
 import { canonicalToolName } from './tool-names.js';
+import { BRAIN_TOOL_DEFS, BrainProxy, isBrainTool } from './brains.js';
 
 /**
  * MCP tool name → the command enum the telemetry contract knows. A tool absent
@@ -27,6 +28,16 @@ const TOOL_COMMAND: Record<string, string> = {
   graft_repo_map: 'map',
   graft_check_freshness: 'check',
 };
+
+/** How long `tools/list` waits on the workspace for its brain tools before listing the built-in ones. */
+const BRAIN_LIST_WAIT_MS = 4000;
+
+/** Said in `instructions` when this machine is connected to a Trail workspace. */
+const BRAINS_LINE =
+  "Connected to a Trail workspace: list_brains, get_context, search_rules and get_rules answer from the team's brains (brand, product, conventions, decisions); each result names its brain and rule. Use them for how the team does things, the tools above for the code.";
+
+/** What the brains-only server says when this machine isn't connected (any more). */
+const NOT_CONNECTED_LINE = 'Not connected to a Trail workspace: run `trail init --connect <code>` with the code from team.trailhq.com to use its brains here.';
 
 function send(msg: object): void {
   process.stdout.write(`${JSON.stringify(msg)}\n`);
@@ -70,14 +81,18 @@ function advertised(root: string, dirOverride?: string): typeof TOOLS {
  * resolves package.json relative to the calling module, and from `dist/mcp/` that
  * lookup misses. The caller already knows it.
  */
-export function startMcpServer(root: string, dirOverride?: string, version = '0'): void {
+export function startMcpServer(root: string, dirOverride?: string, version = '0', opts: { brainsOnly?: boolean } = {}): void {
+  // `trail mcp --brains`: the one entry Claude Code gets once connected to a
+  // workspace. It serves the workspace's brain tools and nothing of the repo's,
+  // so it does none of the repo upkeep either: it starts in every project.
+  const brainsOnly = opts.brainsOnly === true;
   // The self-maintenance pass, run once at boot. This is the ONLY channel that
   // reaches hosts with no hook support (Cursor, and any plain MCP client): it
   // refreshes rule files an older `graft init` wrote, and kicks off the cached
   // registry check. Both are fail-soft, and the resulting lines ride along in
   // `instructions` below — stdout is protocol-only, so there is nowhere else to
   // put them. Never blocks: the registry fetch happens in a detached child.
-  const upkeep = runUpkeep(root, runningVersion()).lines;
+  const upkeep = brainsOnly ? [] : runUpkeep(root, runningVersion()).lines;
   for (const line of upkeep) console.error(line);
   // Same deal for the telemetry queue: flushed from a detached child at boot, so
   // a Cursor user who never touches the CLI still gets their events out.
@@ -86,7 +101,12 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
   // log nobody reads, so printing it here would mark the disclosure as shown
   // without anyone having seen it. It stays pending for the next CLI command,
   // and `graft init`'s picker is the channel that reached this user already.
-  maybeFlushInBackground();
+  if (!brainsOnly) maybeFlushInBackground();
+
+  // The workspace's brains, when this machine is connected to one: asked for
+  // their list now, so it's in hand by the time the client lists tools.
+  const brains = new BrainProxy({ version });
+  if (brains.connected()) void brains.listTools();
 
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on('line', (line) => {
@@ -108,7 +128,9 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
           capabilities: { tools: {} },
           serverInfo: { name: brand(), version },
           // The one channel that survives tool deferral — see ./instructions.ts.
-          instructions: upkeep.length ? `${upkeep.join('\n')}\n\n${mcpInstructions()}` : mcpInstructions(),
+          instructions: [upkeep.length ? upkeep.join('\n') : '', brainsOnly ? '' : mcpInstructions(), brains.connected() ? BRAINS_LINE : brainsOnly ? NOT_CONNECTED_LINE : '']
+            .filter(Boolean)
+            .join('\n\n'),
         });
         return;
       case 'notifications/initialized':
@@ -120,13 +142,32 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
       case 'tools/list': {
         if (isNotification) return;
         // Under trail, the same tools as `trail_*`, described in trail's words.
-        reply(id, { tools: advertised(root, dirOverride).map((t) => ({ name: inBrand(t.name), description: inBrand(t.description), inputSchema: t.inputSchema })) });
+        const local = (brainsOnly ? [] : advertised(root, dirOverride)).map((t) => ({ name: inBrand(t.name), description: inBrand(t.description), inputSchema: t.inputSchema }));
+        if (!brains.connected()) {
+          reply(id, { tools: local });
+          return;
+        }
+        // Connected: the workspace's brain tools too. A slow workspace never holds the repo tools up for long.
+        const capped = new Promise<typeof BRAIN_TOOL_DEFS>((r) => setTimeout(() => r(BRAIN_TOOL_DEFS), BRAIN_LIST_WAIT_MS).unref());
+        Promise.race([brains.listTools(), capped]).then(
+          (remote) => reply(id, { tools: [...local, ...remote] }),
+          () => reply(id, { tools: local }),
+        );
         return;
       }
       case 'tools/call': {
         if (isNotification) return;
         const name = String(params?.name ?? '');
         const args = (params?.arguments ?? {}) as Record<string, unknown>;
+        if (isBrainTool(name)) {
+          // A workspace brain: passed to the workspace as is. Never throws.
+          brains.callTool(name, args).then((r) => reply(id, r));
+          return;
+        }
+        if (brainsOnly) {
+          reply(id, { content: [{ type: 'text', text: `this server answers the workspace's brain tools only; ${name} isn't one` }], isError: true });
+          return;
+        }
         // Async because a tool call may rebuild the graph first (see
         // graph/refresh.ts). `callTool` absorbs its own errors, so the only thing
         // that can reject here is a bug — surface it as a JSON-RPC error rather

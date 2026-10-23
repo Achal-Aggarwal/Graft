@@ -15,6 +15,7 @@ import { compileRun, refusalWords, type CompileOpts } from "../src/skills/compil
 import { callKind } from "../src/trace/checks.js";
 import { isMultiLine } from "../src/trace/shell.js";
 import type { RunCall, RunSheet } from "../src/trace/types.js";
+import { timeBar } from "./machine-speed.js";
 
 const KEY = "github.com/acme/widget";
 let seq = 0;
@@ -97,6 +98,6 @@ test("linear on a 2 MB command", () => {
       answersPrompt(big);
       best = Math.min(best, performance.now() - t);
     }
-    assert.ok(best < 1500, `took ${Math.round(best)} ms on ${big.length} chars`);
+    assert.ok(best < timeBar(1500, 4500), `took ${Math.round(best)} ms on ${big.length} chars`);
   }
 });

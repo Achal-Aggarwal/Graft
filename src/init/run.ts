@@ -164,8 +164,16 @@ function itemsOf(picked: Array<InitCandidate & { n: number }>, named: Named, env
   return out.map((i, k) => ({ ...i, n: k + 1 }));
 }
 
-/** `team`: #662's team rows saved into `.trail/learnings/`, for the agent's commit ask; `teamKept`: what they were, with no screen. */
-export interface LookBackDone { kept: number; inRepo: boolean; team: number; teamKept?: TeamKept }
+/**
+ * `team`: #662's team rows saved into `.trail/learnings/`, for the agent's commit ask; `teamKept`: what they were, with
+ * no screen. `read`: what was looked at, for `init --pair` and `--connect` to count: the past sessions, and the merged
+ * PRs (null when the PR reviews weren't read). `skills`: the skills the look-back found this run, each kept (or not) on
+ * this machine only, for the pair page to list by name and day count: never their steps.
+ */
+export interface LookBackDone { kept: number; inRepo: boolean; team: number; teamKept?: TeamKept; read?: { sessions: number; prs: number | null }; skills?: FoundSkill[] }
+
+/** A skill the look-back found, as `init --pair` names it to Trail's page: its name and title, and on how many days it came up. */
+export interface FoundSkill { id: string; name: string; title: string; days: number }
 
 /**
  * Wait for the reads, show what they found (screen, relay or the script's list), keep what the person picks, and
@@ -205,8 +213,10 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
     reviewResult = await reads.reviews.result.catch(() => null);
   }
   const named = await namedP;
+  const read = { sessions: lb.sessions.length, prs: reviewResult ? reviewResult.prs : null };
   // The look-back's own five, numbered 1..k for the relay and `trail keep`.
   const items = itemsOf(numbered(first), named, env);
+  const skills: FoundSkill[] = items.filter((i) => i.kind === 'skill').map((i) => ({ id: i.id, name: i.plainName, title: i.title, days: i.count.days }));
   // #662's team rows: only findings tied to code that exists, and the memory notes; never relayed.
   const anchored = reviewResult ? anchoredReviews(repo, reviewResult.findings) : [];
   const team = [...reviewItems(anchored, repoKey, new Set([...record.closed, ...record.runs.flatMap((r) => r.kept)])), ...memoryItems(reads.memory, repoKey)];
@@ -277,7 +287,7 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
     }
     if (reads.reviews) await finishReviewRead(repo, reads.reviews, async () => []);
     tele('none_found', 0);
-    return none;
+    return { ...none, read, skills };
   }
 
   if (screen) {
@@ -320,7 +330,7 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
       tele('found', result.kept.filter((i) => !isTeam(i)).length);
     }
     for (const l of afterKeepLines({ ...result, how: answer.how }, facts)) say(l);
-    return { kept: result.kept.length, inRepo: result.kept.some((i) => i.scope === 'repo' || isTeam(i)), team: teamSaved };
+    return { kept: result.kept.length, inRepo: result.kept.some((i) => i.scope === 'repo' || isTeam(i)), team: teamSaved, read, skills };
   }
 
   // No screen: the relay (agent) or the script's list for the look-back's items. A PR-review finding is model text
@@ -356,5 +366,5 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
   if (looked && !reads.skills) say(INIT_COPY.skillsOff!);
   tele('relayed', kept);
   const teamKept = (fromTeam.fromReviews?.saved.length ?? 0) + (fromTeam.fromMemory?.saved.length ?? 0);
-  return { kept: kept + teamKept, inRepo: fromTeam.team > 0, team: fromTeam.team, teamKept: { fromReviews: fromTeam.fromReviews, fromMemory: fromTeam.fromMemory } };
+  return { kept: kept + teamKept, inRepo: fromTeam.team > 0, team: fromTeam.team, teamKept: { fromReviews: fromTeam.fromReviews, fromMemory: fromTeam.fromMemory }, read, skills };
 }

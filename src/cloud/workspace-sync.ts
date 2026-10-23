@@ -22,16 +22,18 @@
  * `_trail-sync` child does it.
  */
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
-import { existsSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { basename, join, relative, sep } from "node:path";
 import { graftCliPath } from "../claude/paths.js";
 import { readBranchCache, refreshBranches } from "../notes/branches.js";
 import { knownRepos, repoName, repoPlace, trailHome } from "../notes/home.js";
-import { LEARNINGS_DIR } from "../notes/repo-trail.js";
+import { LEARNINGS_DIR, learningFiles, readLearningFile } from "../notes/repo-trail.js";
 import { parseNote, type Note } from "../notes/notes.js";
 import { liveLearnings } from "../notes/learning-fields.js";
 import { secretReason } from "../notes/secrets.js";
+import { OWN_SKILLS, skillDirs } from "../skills/skills.js";
+import { matter } from "../util/front-matter.js";
 import { appendPrivateFile, ensurePrivateDir, PRIVATE_FILE_MODE, writePrivateFile } from "../util/private-file.js";
 import { cacheDir, readJson, writeJsonAtomic } from "../util/state.js";
 import { headLearnings } from "./head-learnings.js";
@@ -57,11 +59,106 @@ export interface LeftOut {
   why: string;
 }
 
+/** A skill folder name safe to send as a path part. */
+const SKILL_FOLDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function inside(root: string, p: string): boolean {
+  return p === root || p.startsWith(root + sep);
+}
+
+/** A SKILL.md bigger than this is not a skill, and is never sent. */
+const SKILL_MAX_BYTES = 256 * 1024;
+
+/**
+ * Which of `paths` (relative to `root`) git tracks, by what `git ls-files` says,
+ * so a gitignored or untracked file is not among them. Empty when `root` isn't a
+ * git checkout or git fails: no skill goes up then.
+ */
+function trackedAmong(root: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  try {
+    const out = execFileSync("git", ["--literal-pathspecs", "ls-files", "-z", "--", ...paths], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return new Set(out.split("\0").filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * The repo's skills, as the workspace takes them: each `.claude/skills/<name>/SKILL.md`
+ * in the working tree that git tracks (an untracked or gitignored one isn't the
+ * team's, so it stays here; no git, no skills). Same item as the one init sends
+ * for a skill it just found (the server keeps one per repo and path): the body is
+ * SKILL.md without its frontmatter, the hash is of the whole file. A symlinked
+ * skill is read only when it resolves inside the checkout, and goes up when the
+ * file it resolves to is tracked. A SKILL.md that can't be read or parsed, or is
+ * over 256 KB, is skipped. Skills kept in ~/.trail are never sent.
+ */
+function skillItems(checkout: string): UploadedLearning[] {
+  const dir = skillDirs(checkout).repo;
+  let root: string;
+  let names: string[];
+  try {
+    root = realpathSync(join(dir, "..", ".."));
+    names = readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+  // Each candidate that passes the cheap checks, with where its file really is.
+  const candidates: Array<{ name: string; file: string; real: string }> = [];
+  for (const name of names) {
+    if (!SKILL_FOLDER.test(name) || OWN_SKILLS.has(name)) continue;
+    try {
+      const file = join(dir, name, "SKILL.md");
+      if (!statSync(join(dir, name)).isDirectory()) continue;
+      const st = statSync(file);
+      if (!st.isFile() || st.size > SKILL_MAX_BYTES) continue;
+      const real = realpathSync(file);
+      if (!inside(root, realpathSync(join(dir, name))) || !inside(root, real)) continue;
+      candidates.push({ name, file, real: relative(root, real).split(sep).join("/") });
+    } catch {
+      /* no SKILL.md here */
+    }
+  }
+  const tracked = trackedAmong(root, [...new Set(candidates.map((c) => c.real))]);
+  const out: UploadedLearning[] = [];
+  for (const { name, file, real } of candidates) {
+    if (!tracked.has(real)) continue;
+    try {
+      const text = readFileSync(file, "utf8");
+      const parsed = matter(text);
+      const d = parsed.data as Record<string, unknown>;
+      const description = typeof d.description === "string" ? (d.description.trim().split("\n")[0] ?? "").trim() : "";
+      out.push({
+        path: `.claude/skills/${name}/SKILL.md`,
+        kind: "skill",
+        ref: "",
+        title: description || name,
+        author: typeof d.author === "string" ? d.author.trim() : "",
+        date: "",
+        touches: [],
+        body: parsed.content.trim(),
+        hash: sha256(text),
+      });
+    } catch {
+      /* a SKILL.md that can't be read or parsed */
+    }
+  }
+  return out;
+}
+
 /**
  * Every live learning in the repo's `.trail/`, as the workspace takes them:
  * the ones committed at HEAD, then the ones only a pushed branch has (from
- * the branch cache). Never the working tree's: an uncommitted or untracked
- * learning stays on this machine. Paths are repo-relative; nothing about this
+ * the branch cache), then the repo's skills that git tracks (`skillItems`).
+ * Never the working tree's learnings: an uncommitted or untracked learning
+ * stays on this machine. Paths are repo-relative; nothing about this
  * machine is sent. Null when git couldn't read HEAD: then nothing may go up,
  * since a set without HEAD's learnings would tell the workspace they're gone.
  *
@@ -69,13 +166,17 @@ export interface LeftOut {
  * learning stays behind, so the team page never shows one nobody is meant to
  * follow. A learning on an unmerged branch replaces nothing yet.
  *
- * A learning whose text holds a secret (`secretReason`) stays behind, every
+ * A learning or skill whose text holds a secret (`secretReason`) stays behind, every
  * copy of it: what a sync sent is what vouches for a learning's name in a
  * use, so its name never goes up either. It is listed in `leftOut`, so
  * `trail workspace` can say so instead of it going missing in silence.
+ *
+ * `tree`: the working tree's learnings in place of HEAD's, for `init --pair`'s
+ * review page only, which shows the person what init just wrote before any of
+ * it is committed. A sync never reads them.
  */
-export function workspaceLearnings(checkout: string): { learnings: UploadedLearning[]; leftOut: LeftOut[] } | null {
-  const head = headLearnings(checkout);
+export function workspaceLearnings(checkout: string, opts: { tree?: boolean } = {}): { learnings: UploadedLearning[]; leftOut: LeftOut[] } | null {
+  const head = opts.tree ? treeLearnings(checkout) : headLearnings(checkout);
   if (!head) return null;
   const read: Array<Note & { text: string }> = [];
   const leftOut: LeftOut[] = [];
@@ -95,7 +196,7 @@ export function workspaceLearnings(checkout: string): { learnings: UploadedLearn
   };
   for (const l of head) add(l.name, l.text, "");
   for (const b of readBranchCache(checkout)?.branches ?? []) for (const l of b.learnings) add(l.name, l.text, b.ref);
-  const learnings = liveLearnings(read).map((n) => ({
+  const learnings: UploadedLearning[] = liveLearnings(read).map((n) => ({
     path: `${LEARNINGS_DIR}/${n.path}`,
     ref: n.ref ?? "",
     branch: n.branch,
@@ -108,7 +209,32 @@ export function workspaceLearnings(checkout: string): { learnings: UploadedLearn
     body: n.body,
     hash: sha256(n.text),
   }));
+  // A skill whose text holds a secret stays behind too, named like a learning is.
+  for (const skill of skillItems(checkout)) {
+    const why = secretReason(`${skill.title}\n${skill.body}`);
+    if (why) leftOut.push({ name: skill.path, ref: "", why });
+    else learnings.push(skill);
+  }
   return { learnings, leftOut };
+}
+
+/** The working tree's `.trail/learnings/` files, as `headLearnings` gives HEAD's. */
+function treeLearnings(checkout: string): Array<{ name: string; text: string }> {
+  const out: Array<{ name: string; text: string }> = [];
+  for (const name of learningFiles(checkout)) {
+    const text = readLearningFile(checkout, name);
+    if (text) out.push({ name, text });
+  }
+  return out;
+}
+
+/**
+ * What `init --pair` hands its review page: the working tree's live learnings
+ * (what the person's agents start from, the ones init just wrote among them),
+ * teammates' pushed ones and the repo's tracked skills, secrets left out.
+ */
+export function reviewPayload(checkout: string): UploadedLearning[] {
+  return workspaceLearnings(checkout, { tree: true })?.learnings ?? [];
 }
 
 /** The learnings a sync uploads: `workspaceLearnings` without what it left out. Null when git couldn't read HEAD. */
@@ -131,9 +257,14 @@ function statePath(repo: string): string {
   return join(cacheDir(repo), "trail-workspace-sync.json");
 }
 
-/** Whether the repo at `checkout` is one of the workspace's. */
+/**
+ * Whether the repo at `checkout` is one of the workspace's, so its learnings
+ * and uses go up. Never on a machine connected by `trail init --connect`: that
+ * one sends a repo summary only (titles and counts, no learning bodies, no
+ * searches), whatever repos the workspace lists.
+ */
 export function inWorkspace(checkout: string, cloud: Cloud | null = readCloud()): boolean {
-  return !!cloud && cloud.repos.includes(repoPlace(checkout).key);
+  return !!cloud && cloud.via !== "connect" && cloud.repos.includes(repoPlace(checkout).key);
 }
 
 /**
@@ -182,7 +313,7 @@ function sentPath(env: NodeJS.ProcessEnv = process.env): string {
 function rememberSent(key: string, learnings: UploadedLearning[]): void {
   try {
     const all = readJson<SentLearnings>(sentPath()) ?? {};
-    all[key] = { at: Date.now(), learnings: Object.fromEntries(learnings.map((l) => [learningName(l.path), l.author])) };
+    all[key] = { at: Date.now(), learnings: Object.fromEntries(learnings.filter((l) => l.kind !== "skill").map((l) => [learningName(l.path), l.author])) };
     ensurePrivateDir(trailHome());
     writeJsonAtomic(sentPath(), all, true, PRIVATE_FILE_MODE);
   } catch {
@@ -244,6 +375,11 @@ function sendable(e: ActivityEvent, cloud: Cloud): boolean {
   return cloud.repos.includes(e.repo) && Date.parse(e.at) >= (cloud.linkedAt || 0);
 }
 
+/** Whether uses of `repo` are recorded at all: connected by `pair`/login (not `connect`) and the repo is the workspace's. */
+export function records(cloud: Cloud | null, repo: string): cloud is Cloud {
+  return !!cloud && cloud.via !== "connect" && cloud.repos.includes(repo);
+}
+
 const asStrings = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []);
 const asText = (x: unknown): string => (typeof x === "string" ? x : "");
 
@@ -266,6 +402,7 @@ export function activityEvent(raw: unknown): ActivityEvent | null {
     file_count: count,
     shown_paths: asStrings(r.shown_paths),
     shown_authors: asStrings(r.shown_authors),
+    ...(typeof r.saved_tokens === "number" && Number.isFinite(r.saved_tokens) && r.saved_tokens > 0 ? { saved_tokens: Math.floor(r.saved_tokens) } : {}),
     at: asText(r.at),
   };
 }
@@ -277,7 +414,7 @@ export function activityEvent(raw: unknown): ActivityEvent | null {
  */
 export function recordActivity(use: ActivityEvent, cloud: Cloud | null = readCloud()): void {
   const e = activityEvent(use);
-  if (!e || !cloud || !cloud.repos.includes(e.repo)) return;
+  if (!e || !records(cloud, e.repo)) return;
   try {
     const p = outboxPath();
     appendPrivateFile(p, `${JSON.stringify(e)}\n`);

@@ -28,7 +28,7 @@ import { versionOf } from "./front-version.js";
 import { nearestThere, rewriteSkill, skillMark, trailOwned, within } from "./skill-file.js";
 
 /** Trail's and graft's own skills, rewritten by every `init`: never a place for takeaways. */
-const OWN_SKILLS = new Set(["trail", "graft"]);
+export const OWN_SKILLS = new Set(["trail", "graft"]);
 
 /**
  * Where a repo's skills are: the repo's in its `.claude/skills/`, and this

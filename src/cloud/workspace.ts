@@ -18,8 +18,8 @@ import { trailHome } from "../notes/home.js";
 import { ensurePrivateDir, PRIVATE_FILE_MODE } from "../util/private-file.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 
-/** Trail's own front end and API. */
-const DEFAULT_TRAIL_URL = "https://app.trailhq.com";
+/** Trail's own front end and API: Trail cloud, which serves the CLI routes at team.trailhq.com. */
+export const DEFAULT_TRAIL_URL = "https://team.trailhq.com";
 
 /**
  * TEST ONLY. Points sign-in at a stand-in Trail, for tests and local demos.
@@ -51,16 +51,30 @@ function testServer(env: NodeJS.ProcessEnv): string | null {
   return local ? url : null;
 }
 
+/** The Trail `init --connect` or `--pair` was told with `--server`, for the rest of this process. */
+let runServer: string | null = null;
+
 /**
  * Where a sign-in goes when nothing chose otherwise: Trail cloud. The
  * connection then keeps the address it signed in at in cloud.json, and every
  * later call goes there. No variable a shell might still export moves it
  * (TRAIL_URL, or GRAFT_BRAIN_URL for the old brain API): a self-hosted Trail
- * comes from `trail login --server`, saved on the link; tests use
+ * comes from `trail login --server`, saved on the link, or from `--server`
+ * on `init --connect` and `--pair` for that run (`useServer`); tests use
  * TEST_SERVER_ENV.
  */
 export function trailUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return testServer(env) ?? DEFAULT_TRAIL_URL;
+  return runServer ?? testServer(env) ?? DEFAULT_TRAIL_URL;
+}
+
+/**
+ * `--server <url>` on `init --connect` and `--pair` (and the `_trail-pair`
+ * child they start): the Trail that gave the code, for every call this
+ * process makes. Set by the command line, never read from the environment;
+ * null puts it back to Trail cloud.
+ */
+export function useServer(url: string | null): void {
+  runServer = url;
 }
 
 export interface WorkspaceInfo {
@@ -81,6 +95,12 @@ export interface Cloud {
   /** Repo keys in the workspace (`github.com/owner/name`), as of the last look. */
   repos: string[];
   linkedAt: number;
+  /**
+   * `connect`: connected by `trail init --connect <code>` from the onboarding
+   * on the web. Such a machine sends a repo summary (titles, counts, names)
+   * and never the full learnings sync, so it's never asked to add repos.
+   */
+  via?: "connect";
 }
 
 function cloudPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -190,11 +210,24 @@ export interface HandoffRepo {
  */
 export async function registerHandoff(
   base: string,
-  req: { state: string; repo: { key: string; name: string } | null; repos: HandoffRepo[]; author: string },
+  req: { state: string; repo: { key: string; name: string } | null; repos: HandoffRepo[]; author: string; pair?: string },
   fetchImpl?: Fetch,
 ): Promise<{ url: string } | ApiError> {
   const r = await call<{ url: string }>(base, "POST", "/api/cli/handoffs", req, { fetchImpl });
   return isError(r) ? r : r.body;
+}
+
+/**
+ * Report how a `trail init --pair` run is going, for the onboarding page that
+ * shows it live. "reviewed" once the person has kept or dropped what it found
+ * (Trail takes no more), "gone" when the link expired or Trail doesn't know it.
+ */
+export async function postHandoffProgress(base: string, body: { state: string } & Record<string, unknown>, fetchImpl?: Fetch): Promise<"ok" | "reviewed" | "gone" | "error"> {
+  const r = await call(base, "POST", "/api/cli/handoffs/progress", body, { fetchImpl, timeoutMs: 15_000 });
+  if (!isError(r)) return "ok";
+  if (r.status === 409) return "reviewed";
+  if (r.status === 404 || r.status === 410) return "gone";
+  return "error";
 }
 
 export type ClaimResult =
@@ -247,8 +280,10 @@ export function addRepo(c: Cloud, repo: { key: string; name: string }, fetchImpl
 }
 
 export interface UploadedLearning {
-  /** `.trail/learnings/<name>`. */
+  /** `.trail/learnings/<name>`, or `.claude/skills/<name>/SKILL.md` for a skill. */
   path: string;
+  /** "skill" for a skill of the repo; a plain learning leaves it out. */
+  kind?: "skill";
   /** "" when committed at HEAD, or the pushed branch it was found on (`origin/kumar/x`). */
   ref: string;
   branch?: string;
@@ -285,6 +320,8 @@ export interface ActivityEvent {
   /** File names of the learnings it showed: the name is what the workspace knows a learning by. */
   shown_paths: string[];
   shown_authors: string[];
+  /** Tokens the map saved on this lookup (what `ask` prints as "tokens saved"); absent when unknown. */
+  saved_tokens?: number;
   at: string;
 }
 

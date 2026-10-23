@@ -222,7 +222,7 @@ test("a login link for another Trail is a new link: a state registered with one 
   const { dir } = repo();
   const env = { ...process.env, TRAIL_TEST_SERVER: undefined };
   const first = loginLink(dir, env);
-  assert.match(first, /^https:\/\/app\.trailhq\.com\/connect\?state=/);
+  assert.match(first, /^https:\/\/team\.trailhq\.com\/connect\?state=/);
   const second = loginLink(dir, env, Date.now(), "https://trail.acme.example.com");
   assert.match(second, /^https:\/\/trail\.acme\.example\.com\/connect\?state=/);
   assert.notEqual(new URL(first).searchParams.get("state"), new URL(second).searchParams.get("state"));

@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.24.1
+
+### Added
+
+- **`trail init --pair <code>`**: set up from the Trail web app at
+  team.trailhq.com. The setup prompt there carries a pair code; with it, init
+  streams its steps (map, PR reviews, past sessions, learnings) to the live
+  onboarding page, which shows the tokens one lookup on the map saved and
+  teammates' open branches that touch your files, then hands the repo's
+  learnings and skills over for you to review before anything is uploaded.
+  A learning you drop there stays dropped.
+- **`trail init --connect <code>`**: connects this machine to your Trail
+  workspace with the one-time code from team.trailhq.com (the token goes where
+  `trail login` keeps it) and sends one summary of the repo: what a lookup on
+  the code map saved, the learnings' titles, and teammates' recently pushed
+  branches that change the files you work on. Titles, counts and names only;
+  never code, diffs or session text.
+- **`--server <url>`** (or `TRAIL_URL`) points `--pair` and `--connect` at a
+  self-hosted Trail. Offline, init says so once and prints the exact command
+  to connect later.
+- **Workspace brains in your agents**: once connected, `trail mcp` also serves
+  the workspace's `list_brains`, `get_context`, `search_rules` and `get_rules`,
+  passed to the workspace with your token; the repo tools keep working
+  offline. Claude Code gets one user-level `trail` entry that serves just
+  those (`trail mcp --brains`); `trail logout` takes it out.
+- `trail init` writes a skill when your past sessions repeat a procedure.
+
+### Changed
+
+- Trail cloud now defaults to https://team.trailhq.com.
+
+### Fixed
+
+- The agent picker no longer leaves a stray title behind in an 80-column
+  terminal.
+
+## 0.24.0
+
+### Added
+
+- **`trail init` offers what your teammates' Claude doesn't know yet** (#662):
+  what reviewers flagged on merged PRs, and Claude Code's memory of the repo.
+  Every team row names real code, and anything CLAUDE.md, AGENTS.md or a
+  learning already says is dropped. What you told Claude more than once is now
+  offered as personal only.
+- **Learnings are asked for on real signals** (#663): a check that failed, then
+  passed after an edit; a correction followed by code work; a commit, push or
+  PR after edits; a long read that found where something lives. The ask names
+  what happened.
+- **`trail note` checks a team learning before saving it**: it must name a file
+  or function in the repo, give a reason, and not repeat an existing learning.
+  `--replaces <file>` supersedes an old one, and `--anyway` skips the checks.
+- **Shell parsing and command risk checks** behind trail's hooks, and new
+  learning fields (#654).
+- **Gleam support** (#408).
+
+### Fixed
+
+- Language servers are found and started on Windows (#579), and child
+  processes no longer flash console windows there (#631).
+- Update checks honor `DO_NOT_TRACK` (#651).
+- `--no-gitignore` is kept when build options are saved (#413), and `/graft/`
+  isn't added to `.gitignore` when git already ignores the folder (#622).
+- Unchanged cards aren't rewritten on every build (#472).
+- Background task notifications no longer trigger retrieval in the prompt hook
+  (#551).
+- Deep builds: stringified concept-pass nodes are read, empty batches don't
+  tick (#395), and concept batches run in parallel (#521).
+- LLM providers: a 200 carrying an error is retried, a forced `tool_choice`
+  that isn't honoured falls back (#502), and structured message content from
+  OpenAI-compatible providers is read (#479).
+- The viewer keeps the selection after a pan (#630).
+
 ## 0.23.1
 
 ### Fixed

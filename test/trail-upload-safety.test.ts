@@ -343,8 +343,8 @@ test("the usage-stats queue in ~/.graft is readable by its owner only, and so is
 
 test("no address in the shell moves where sign-in and learnings go: not an old GRAFT_BRAIN_URL, not TRAIL_URL", () => {
   const shell = { GRAFT_BRAIN_URL: "https://old-brain.example.test/", TRAIL_URL: "https://elsewhere.example.com/" };
-  assert.equal(trailUrl(shell), "https://app.trailhq.com");
-  assert.match(connectUrl("s".repeat(32), trailUrl(shell)), /^https:\/\/app\.trailhq\.com\/connect\?state=/);
+  assert.equal(trailUrl(shell), "https://team.trailhq.com");
+  assert.match(connectUrl("s".repeat(32), trailUrl(shell)), /^https:\/\/team\.trailhq\.com\/connect\?state=/);
 });
 
 test("the test-only TRAIL_TEST_SERVER reaches a stand-in on this machine or a .test host, nowhere else", () => {
@@ -353,6 +353,6 @@ test("the test-only TRAIL_TEST_SERVER reaches a stand-in on this machine or a .t
   assert.equal(trailUrl({ TRAIL_TEST_SERVER: "http://[::1]:9" }), "http://[::1]:9");
   assert.equal(trailUrl({ TRAIL_TEST_SERVER: "http://trail.test" }), "http://trail.test");
   for (const elsewhere of ["https://trail.acme.example.com", "https://localhost.example.com", "http://test.example.com", "file:///tmp/x", "not a url"]) {
-    assert.equal(trailUrl({ TRAIL_TEST_SERVER: elsewhere }), "https://app.trailhq.com", elsewhere);
+    assert.equal(trailUrl({ TRAIL_TEST_SERVER: elsewhere }), "https://team.trailhq.com", elsewhere);
   }
 });
