@@ -199,7 +199,8 @@ test("a skill goes up with its folder: what git tracks, text as text, the rest a
   assert.deepEqual(Object.keys(files).sort(), ["assets/logo.png", "references/forms.md", "scripts/fill.py"]);
   assert.equal(files["references/forms.md"]!.content, "# Forms\nUse field names.\n");
   assert.equal(files["references/forms.md"]!.encoding, undefined);
-  assert.equal(files["scripts/fill.py"]!.executable, true);
+  // Windows has no executable bit to keep.
+  if (process.platform !== "win32") assert.equal(files["scripts/fill.py"]!.executable, true);
   assert.equal(files["assets/logo.png"]!.encoding, "base64");
   assert.deepEqual([...Buffer.from(files["assets/logo.png"]!.content, "base64")], [0x89, 0x50, 0x4e, 0x47, 0, 1, 2]);
 
