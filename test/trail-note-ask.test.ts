@@ -174,6 +174,27 @@ test('the Stop hook asks once per sign, three times a session at most, and never
   assert.notEqual(await stop({ session_id: 's2', transcript_path: t }), '', 'a new session is asked again');
 });
 
+test('one fail then pass asks once: rerunning the passing check after the answer asks nothing more', async () => {
+  process.env.TRAIL_HOME = mkdtempSync(join(tmpdir(), 'note-ask-home-'));
+  process.env[BRAND_ENV] = 'trail';
+  const d = mkdtempSync(join(tmpdir(), 'note-ask-repo-'));
+  mkdirSync(join(d, 'graft', '.cache', 'session'), { recursive: true });
+  process.env.CLAUDE_PROJECT_DIR = d;
+  ensureRepoHome(d);
+  const t = join(d, 't.jsonl');
+  writeFileSync(t, jsonl(prompt('fix the retry bug'), bash('npm test', 'x', true), edit('src/a.ts', d), bash('npm test', 'ok')));
+  assert.match(JSON.parse(await stop({ session_id: 's3', transcript_path: t })).reason, /^\[trail\] npm test failed once/);
+  appendFileSync(t, '\n' + jsonl(say('Nothing worth keeping.')));
+  assert.equal(await stop({ session_id: 's3', transcript_path: t, stop_hook_active: true }), '');
+  for (const again of ['run the tests again', 'and once more']) {
+    appendFileSync(t, '\n' + jsonl(prompt(again), bash('npm test', 'ok'), say('All pass.')));
+    assert.equal(await stop({ session_id: 's3', transcript_path: t }), '', `${again}: the same fail and pass, already answered`);
+  }
+  // A new failure and fix is a new sign.
+  appendFileSync(t, '\n' + jsonl(prompt('now the timeout bug'), bash('npm test', 'x', true), edit('src/b.ts', d), bash('npm test', 'ok')));
+  assert.match(JSON.parse(await stop({ session_id: 's3', transcript_path: t })).reason, /^\[trail\] npm test failed/);
+});
+
 test("a shell edit's file is read whole on Windows too: the drive, backslashes, Git Bash's slashes, a short name", () => {
   const cmd = "sed -i '' 's/4/6/' C:\\Users\\priya\\shop\\src\\client.ts && cat C:/Users/priya/shop/go.mod D:\\RUNNER~1\\shop\\main.go";
   assert.deepEqual(cmd.match(fileWordRe('win32')), ['C:\\Users\\priya\\shop\\src\\client.ts', 'D:\\RUNNER~1\\shop\\main.go']);

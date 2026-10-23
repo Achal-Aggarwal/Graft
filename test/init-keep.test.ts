@@ -232,3 +232,28 @@ test("r keeps a preference in the repo's .trail/learnings; w to this repo keeps 
     assert.ok(!existsSync(join(env.TRAIL_HOME!, "learnings")), "nothing every-repo");
   });
 });
+
+test("a long preference is kept whole in the body; only its title is cut, at a word", async () => {
+  // pluggy's line: cut at 120 characters it ended "PYTHONPATH=sr", a wrong command the agent was told to follow.
+  const long = "don't use uv run here, it isn't installed. run it with the system python: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src python3 -m pytest";
+  await withHome("keep-pref-long", async ({ home, env }) => {
+    const place = repoIn(home, env);
+    const { refs } = projectTranscript(home, [typedLine("set up the release"), typedLine(long)]);
+    const item: InitItem = { ...prefCandidate(refs[1]!), n: 1, title: long, description: "", scope: "repo", applies: place.repoKey };
+    const r = keepItems([item], [item], "tty", env, new Date(), place);
+    assert.deepEqual(r.refused, []);
+    const [file] = allFiles(join(place.dir, ".trail", "learnings")).filter((f) => f.endsWith(".md"));
+    const text = readFileSync(file!, "utf8");
+    assert.ok(text.includes(long), "the whole line is in the body");
+    const title = /^title: "?(.*?)"?$/m.exec(text)![1]!;
+    assert.ok(title.length <= 120, title);
+    assert.ok(long.startsWith(title.replace(/…$/, "")), title);
+    assert.match(title, /(?:^|\s)\S+…$/, "cut after a whole word");
+    assert.doesNotMatch(title, /PYTHONPATH=sr…$/);
+    // What the agent is told at session start is the whole line, never the cut title.
+    const { standingLearnings } = await import("../src/notes/notes.js");
+    const { standingDirective } = await import("../src/claude/format.js");
+    const said = standingDirective(standingLearnings(place.dir));
+    assert.ok(said.includes(`  · ${long} (added to this repo)`), said);
+  });
+});

@@ -1723,7 +1723,8 @@ function wireTarget(
       // Phase 2 (4.17, Q3): Codex runs Trail's hooks only once the person trusts them in /hooks.
       if (r.hooks.some((h) => h.id === "codex-hooks")) {
         const trust = codexTrustLine({ ...process.env, HOME: home, CODEX_HOME: process.env.CODEX_HOME || join(home, ".codex") });
-        if (trust) say(`· ${trust}`);
+        // A ⚠ line, so the short output keeps it too: until then Trail does nothing in Codex.
+        if (trust) say(`⚠ ${trust}`);
       }
       // Only worth saying when there was actually something out-of-repo to skip.
       if (opts.global === false && selectedWrites(plan, ids).some((w) => w.scope === "global"))

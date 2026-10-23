@@ -96,3 +96,9 @@ test("a Bash call's learnings join the skills part's context in one answer, and 
   assert.match(merged.context ?? '', /^skills context\n\n.*Take workspace from server-held data/s, 'not used up by the block');
   assert.match(withTouchLearnings({}, bash('m2'), d).context ?? '', /Take workspace/);
 });
+
+test('a learning with no measured cost is credited without a saving, never "· null"', () => {
+  const out = notesOnTouch([note('workspace from server', ['tool/workspace.py'])], { file: 'tool/workspace.py', verb: 'opened' }, session()) ?? '';
+  assert.doesNotMatch(out, /null/);
+  assert.match(out, /\(e\.g\. "📝 Started from Anirudh's learning"\):/);
+});
