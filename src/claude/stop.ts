@@ -24,6 +24,7 @@ import { detectHost } from '../trace/host.js';
 import { hookCursorPath } from '../trace/state.js';
 import { trailHome } from '../notes/trail-home.js';
 import { keepsNotes } from '../notes/home.js';
+import { maybeSyncInBackground } from '../cloud/workspace-sync.js';
 import { brand } from '../brand.js';
 import { NOTE_ASKS_PER_SESSION, noteAsk, noteSignals } from './note-signals.js';
 import type { HookOut } from '../skills/types.js';
@@ -183,6 +184,8 @@ export async function handleStopEvent(input: unknown, dir: string, opts: { skill
   const i: StopInput = input && typeof input === 'object' && !Array.isArray(input) ? (input as StopInput) : {};
   const transcript = turnEnd(i, dir);
   startSync(dir);
+  // A learning committed this turn, and the turn's skill runs and searches, reach the team now, not next session.
+  maybeSyncInBackground(dir);
   if (opts.skills === false) return;
   let out: HookOut = {};
   try {

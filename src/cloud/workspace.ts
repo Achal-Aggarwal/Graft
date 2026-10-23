@@ -330,7 +330,8 @@ export const UPLOAD_PART_BYTES = 12 * 1024 * 1024;
 
 export async function uploadLearnings(
   c: Cloud,
-  req: { repo: { key: string; name: string }; learnings: UploadedLearning[] },
+  // removed: HEAD paths gone since the last sync on the same branch. held: how many were left out for a secret.
+  req: { repo: { key: string; name: string }; learnings: UploadedLearning[]; removed?: string[]; held?: number },
   fetchImpl?: Fetch,
 ): Promise<{ repo: string; learnings: number; added: number } | ApiError> {
   const parts: UploadedLearning[][] = [[]];
