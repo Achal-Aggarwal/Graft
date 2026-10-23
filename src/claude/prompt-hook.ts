@@ -19,6 +19,7 @@ import { findNotes, listNotes, type NoteHit } from '../notes/notes.js';
 import { INJECTED_POINTERS_CAP, notesForPrompt, relevantRetrieval, type AskJson } from './format.js';
 import { CHILD_TIMEOUT_MS, emitHook, graftJsonWithin, payloadSessionId, withContextDirArg } from './hook-io.js';
 import { promptPart } from './skills-wiring.js';
+import { recordSkillUse, skillOfPrompt } from './skill-use.js';
 import { readSession, readStats, writeSession } from './state.js';
 import { readWiring } from './stats.js';
 import { ownText, PASTE_MARK } from '../trace/claude.js';
@@ -258,6 +259,8 @@ export async function handlePrompt(input: any, dir: string, opts: { budgetMs?: n
   // Background completion notices are machine events, not user queries: no skills answer, no ask (#551).
   if (String(input?.prompt ?? '').trimStart().startsWith('<task-notification>')) return;
   const deadline = Date.now() + (opts.budgetMs ?? PROMPT_BUDGET_MS);
+  // `/name` for one of the repo's skills is a run of it; the name only goes.
+  recordSkillUse(skillOfPrompt(input?.prompt), input, dir);
   const skills = await promptPart(input, dir);
   if (skills.block) return void emitHook('UserPromptSubmit', { block: skills.block });
   const say = (txt: string) => emitHook('UserPromptSubmit', { context: [skills.context, txt].filter(Boolean).join('\n\n'), notice: skills.notice });

@@ -75,8 +75,9 @@ function hookBlocks(command: (arg: string) => string): Record<string, Json[]> {
       // Read/Grep/Glob as source reads vs graft as graft reads, which is what feeds
       // `graft stats` and the `session_summary` graft-vs-grep ratio. Broad matcher,
       // but the handler no-ops instantly unless there is something to record, so an
-      // unrelated Bash or a plain Read costs only a stdin read.
-      { matcher: 'Bash|mcp__graft__|mcp__trail__|Read|Grep|Glob', hooks: [{ type: 'command', command: hookCmd_('tool-savings'), timeout: 8 }] },
+      // unrelated Bash or a plain Read costs only a stdin read. `Skill` is the
+      // agent using a skill: one of the repo's goes to the workspace as a run.
+      { matcher: 'Bash|mcp__graft__|mcp__trail__|Read|Grep|Glob|Skill', hooks: [{ type: 'command', command: hookCmd_('tool-savings'), timeout: 8 }] },
     ],
     // Longer than the other hooks: its `graft ask` is a real query, and a query
     // brings the graph up to date first (graph/refresh.ts). The hook itself

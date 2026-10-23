@@ -355,13 +355,16 @@ export async function uploadLearnings(
 }
 
 /**
- * One use of the learnings: a search that showed some, or a check against
- * them. Counts and which learnings, never content: no query (for the prompt
- * hook that is the person's prompt) and no file paths.
+ * One use of the learnings: a search that showed some, a check against them,
+ * or a coding agent using one of the repo's skills. Counts and which
+ * learnings, never content: no query (for the prompt hook that is the
+ * person's prompt), no file paths and no task.
  */
 export interface ActivityEvent {
   repo: string;
-  kind: "search" | "check";
+  kind: "search" | "check" | "skill";
+  /** For a skill use: the skill's folder name under `.claude/skills/`. */
+  skill?: string;
   asker: string;
   session: string;
   /** How many files the answer pointed into, or the check covered. */

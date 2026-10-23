@@ -37,6 +37,7 @@ import { everyRepoLearnings } from '../notes/every-repo.js';
 import type { Note } from '../notes/notes.js';
 import { hostFacts } from '../skills/host-facts.js';
 import { trailNow } from '../skills/settings.js';
+import { recordSkillUse, skillOfToolUse } from './skill-use.js';
 import { keptContext, keptNotice } from './start-init.js';
 
 export { lastFileScopeHint, promptAskTimeout } from './prompt-hook.js';
@@ -533,6 +534,7 @@ export async function main(event: string): Promise<void> {
 
   if (event === 'tool-savings') {
     handleToolUse(input, dir);
+    recordSkillUse(skillOfToolUse(input), input, dir);
     // PostToolUse on Bash: the skills mark, and the post-tool offer channel's context (3.4),
     // then the learnings about the file the call touched, in the same one answer.
     emitHook('PostToolUse', withTouchLearnings(await postBashPart(input, dir, false), input, dir));

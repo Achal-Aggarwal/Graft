@@ -355,8 +355,19 @@ export async function syncRepo(
 /* what the workspace has                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** Per repo key: the learnings its last upload from this machine carried, by file name, with their authors. */
-type SentLearnings = Record<string, { at: number; learnings: Record<string, string> }>;
+/** Per repo key: the learnings its last upload from this machine carried, by file name, with their authors, and its skills by folder name. */
+type SentLearnings = Record<string, { at: number; learnings: Record<string, string>; skills?: string[] }>;
+
+/** What the workspace got of each repo: learnings by file name to author, and skill folder names. */
+interface Sent {
+  learnings: Map<string, Map<string, string>>;
+  skills: Map<string, Set<string>>;
+}
+
+/** `.claude/skills/<name>/SKILL.md` → `<name>`; "" for any other path. */
+export function repoSkillName(path: string): string {
+  return /^\.claude\/skills\/([^/]+)\/SKILL\.md$/.exec(path)?.[1] ?? "";
+}
 
 function sentPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(trailHome(env), "workspace-sent.json");
@@ -370,7 +381,8 @@ function sentPath(env: NodeJS.ProcessEnv = process.env): string {
 function rememberSent(key: string, learnings: UploadedLearning[]): void {
   try {
     const all = readJson<SentLearnings>(sentPath()) ?? {};
-    all[key] = { at: Date.now(), learnings: Object.fromEntries(learnings.filter((l) => l.kind !== "skill").map((l) => [learningName(l.path), l.author])) };
+    const skills = learnings.filter((l) => l.kind === "skill").map((l) => repoSkillName(l.path)).filter(Boolean);
+    all[key] = { at: Date.now(), learnings: Object.fromEntries(learnings.filter((l) => l.kind !== "skill").map((l) => [learningName(l.path), l.author])), skills };
     ensurePrivateDir(trailHome());
     writeJsonAtomic(sentPath(), all, true, PRIVATE_FILE_MODE);
   } catch {
@@ -378,15 +390,15 @@ function rememberSent(key: string, learnings: UploadedLearning[]): void {
   }
 }
 
-/** File name to author, for every learning the workspace got of each repo. Empty when nothing was sent yet. */
-function readSent(): Map<string, Map<string, string>> {
-  const out = new Map<string, Map<string, string>>();
+/** What the workspace got of each repo from this machine. Empty when nothing was sent yet. */
+function readSent(): Sent {
+  const out: Sent = { learnings: new Map(), skills: new Map() };
   const all = readJson<SentLearnings>(sentPath());
   if (typeof all !== "object" || all === null) return out;
   for (const [key, v] of Object.entries(all)) {
     const ls = v?.learnings;
-    if (typeof ls !== "object" || ls === null) continue;
-    out.set(key, new Map(Object.entries(ls).filter((e): e is [string, string] => typeof e[1] === "string")));
+    if (typeof ls === "object" && ls !== null) out.learnings.set(key, new Map(Object.entries(ls).filter((e): e is [string, string] => typeof e[1] === "string")));
+    out.skills.set(key, new Set(asStrings(v?.skills)));
   }
   return out;
 }
@@ -395,10 +407,12 @@ function readSent(): Map<string, Map<string, string>> {
  * The use as it may go up: only the learnings the workspace already got of
  * its repo, each with the author that upload gave it. A personal learning,
  * an uncommitted or untracked one, or one an older trail queued, is dropped
- * from it, name and author both.
+ * from it, name and author both. A skill use goes only for a skill the
+ * workspace got of that repo; any other is dropped whole.
  */
-function onlySent(e: ActivityEvent, sent: Map<string, Map<string, string>>): ActivityEvent {
-  const has = sent.get(e.repo);
+function onlySent(e: ActivityEvent, sent: Sent): ActivityEvent | null {
+  if (e.kind === "skill") return e.skill && sent.skills.get(e.repo)?.has(e.skill) ? e : null;
+  const has = sent.learnings.get(e.repo);
   const names = [...new Set(e.shown_paths)].filter((n) => has?.has(n));
   const authors = names.map((n) => has!.get(n)!);
   return { ...e, shown_paths: names, shown_authors: e.kind === "check" ? [...new Set(authors)] : authors };
@@ -437,6 +451,8 @@ export function records(cloud: Cloud | null, repo: string): cloud is Cloud {
   return !!cloud && cloud.via !== "connect" && cloud.repos.includes(repo);
 }
 
+/** A skill's folder name, as Claude Code names skills. */
+const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const asStrings = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []);
 const asText = (x: unknown): string => (typeof x === "string" ? x : "");
 
@@ -449,11 +465,14 @@ const asText = (x: unknown): string => (typeof x === "string" ? x : "");
 export function activityEvent(raw: unknown): ActivityEvent | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  if (r.kind !== "search" && r.kind !== "check") return null;
+  if (r.kind !== "search" && r.kind !== "check" && r.kind !== "skill") return null;
+  const skill = r.kind === "skill" ? asText(r.skill) : "";
+  if (r.kind === "skill" && !SKILL_NAME.test(skill)) return null;
   const count = typeof r.file_count === "number" && Number.isFinite(r.file_count) ? Math.max(0, Math.floor(r.file_count)) : asStrings(r.files).length;
   return {
     repo: asText(r.repo),
     kind: r.kind,
+    ...(skill ? { skill } : {}),
     asker: asText(r.asker),
     session: asText(r.session),
     file_count: count,
@@ -529,7 +548,8 @@ export async function flushActivity(cloud: Cloud, fetchImpl?: typeof fetch): Pro
     try {
       if (!line.trim()) continue;
       const e = activityEvent(JSON.parse(line));
-      if (e && sendable(e, cloud)) events.push(onlySent(e, has));
+      const out = e && sendable(e, cloud) ? onlySent(e, has) : null;
+      if (out) events.push(out);
     } catch {
       /* a torn line */
     }
