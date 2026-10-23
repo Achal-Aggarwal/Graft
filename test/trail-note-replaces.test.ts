@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { learningId, newLearningId } from "../src/notes/learning-fields.js";
 import { parseNote } from "../src/notes/notes.js";
 import { homeEnv, tmpRepo } from "./helpers.js";
+import { escapeRe } from "./escape.js";
 
 const OLD_NAME = "2026-10-08-keep-the-default-retry-count-at-maya.md";
 const OLD = `---\ntitle: "Keep the default retry count at 4"\nauthor: Maya\ndate: 2026-10-08\ntouches:\n  - client.go\n---\n\n## Decided\n- Keep defaultRetryMax = 4: ten retries can hold one call for an hour.\n`;
@@ -53,7 +54,7 @@ test("a learning saved with --replaces names the old one, says its own id and wh
   assert.equal(written.replaces, oldId);
   assert.equal(written.src, "agent", "trail note is how an agent saves");
   assert.match(saved.out, new RegExp(`^· id ${written.id}$`, "m"));
-  assert.match(saved.out, new RegExp(`^· takes over from ${OLD_NAME.replace(/\./g, "\\.")}, which stays as the record$`, "m"));
+  assert.match(saved.out, new RegExp(`^· takes over from ${escapeRe(OLD_NAME)}, which stays as the record$`, "m"));
   assert.equal(readFileSync(join(repo, ".trail", "learnings", OLD_NAME), "utf8"), OLD, "the old learning is left as written");
 
   const ask = run(["ask", "default retry count", repo, "--json"], home);

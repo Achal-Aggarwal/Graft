@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { discoverSessions, readSession } from "../src/init/sessions.js";
+import { discoverSessions, readSession, within } from "../src/init/sessions.js";
 import { tmpRepo } from "./helpers.js";
 
 // Days are local dates (init-days.test.ts); these fixtures are written in UTC.
@@ -67,13 +67,14 @@ function world() {
 test("a repo's sessions: its own, its worktrees', other clones of its remote; not a sibling's or another repo's", () => {
   const w = world();
   session(w.home, folderOf(w.repo), "own-1", [typed(w.repo, day(1), "run the tests before you push")]);
-  session(w.home, folderOf(`${w.repo}/.claude/worktrees/x`), "own-2", [typed(`${w.repo}/.claude/worktrees/x`, day(2), "use pnpm here")]);
+  const inner = join(w.repo, ".claude", "worktrees", "x");
+  session(w.home, folderOf(inner), "own-2", [typed(inner, day(2), "use pnpm here")]);
   session(w.home, folderOf(w.wt), "wt-1", [typed(w.wt, day(3), "keep the PR small")]);
   session(w.home, folderOf(w.clone), "clone-1", [typed(join(w.clone, "src"), day(4), "open the PR against dev")]);
   session(w.home, folderOf(w.sibling), "sib-1", [typed(w.sibling, day(5), "not this repo")]);
   session(w.home, folderOf(w.other), "web-1", [typed(w.other, day(6), "another repo")]);
   // Claude Code has kept a space in folder names too: the file's own cwd decides, not the folder's name.
-  session(w.home, `${w.repo.replace(/\//g, "-")} copy`, "own-3", [typed(w.repo, day(7), "explain it simply")]);
+  session(w.home, `${w.repo.replace(/[\\/:]/g, "-")} copy`, "own-3", [typed(w.repo, day(7), "explain it simply")]);
 
   const d = discoverSessions(w.repo, w.home, undefined, envOf(w));
   const ids = d.sessions.map((s) => s.id).sort();
@@ -155,4 +156,16 @@ test("discovery off the main thread finds exactly what it finds on it", async ()
   const off = await discoverOffThread(w.repo, w.home, envOf(w));
   assert.deepEqual(off, discoverSessions(w.repo, w.home, undefined, envOf(w)));
   assert.equal(off.sessions.length, 2);
+});
+
+test("on Windows a worktree git lists as C:/a/wt holds a session whose cwd says C:\\A\\wt\\src", () => {
+  const was = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    assert.ok(within("C:\\A\\wt\\src", ["C:/a/wt"]));
+    assert.ok(within("C:\\a\\wt", ["C:/a/wt"]));
+    assert.ok(!within("C:\\a\\wt-old", ["C:/a/wt"]), "a sibling with a longer name is not inside");
+  } finally {
+    Object.defineProperty(process, "platform", was);
+  }
 });

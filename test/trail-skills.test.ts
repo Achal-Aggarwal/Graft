@@ -176,8 +176,9 @@ test("a session hears about skills Claude Code can't load by itself, and nothing
   learn(repo, { skill: "pdf-coords", text: ROTATION, author: "Sam", date: DAY });
   learn(repo, { skill: "deploys", text: "Run the migration check first.", author: "Sam", date: DAY });
   const line = skillsDirective(repo);
-  assert.match(line, /deploys \(1 correction newer than its SKILL\.md, in \S+\/deploys\/takeaways\)/);
-  assert.match(line, /pdf-coords \(on this machine: \S+\/pdf-coords\/SKILL\.md, then 1 correction in \S+\/pdf-coords\/takeaways\)/);
+  // The paths are this machine's own, for the agent to read: `\` between folders on Windows.
+  assert.match(line, /deploys \(1 correction newer than its SKILL\.md, in \S+[\\/]deploys[\\/]takeaways\)/);
+  assert.match(line, /pdf-coords \(on this machine: \S+[\\/]pdf-coords[\\/]SKILL\.md, then 1 correction in \S+[\\/]pdf-coords[\\/]takeaways\)/);
   // `trail skills show` is the learned skills' command now: it can't print these (g7 review).
   assert.doesNotMatch(line, /skills show|run `/);
   assert.match(line, /Read them before working in one's area, the corrections newest first; they win where they disagree/);

@@ -4,16 +4,15 @@
  */
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { readWalls } from '../src/trace/wall-state.js';
 import { writeEveryRepo } from '../src/notes/every-repo.js';
 import { guardrailLearning } from '../src/notes/guardrails.js';
-import { FIXED_DIRS } from '../src/trace/guard-fast.js';
 import { repoKnown } from '../src/trace/known-repo.js';
 import { poolPath } from '../src/trace/pool.js';
 import {
-  agentRuns, at, box, calling, done, finish, one, pathWithoutTimeout, postBashFailHook, promptHook, release, reply, resultOf, session, SHOP, startHook, stateOf, stopHook, type Box,
+  agentRuns, at, box, calling, done, finish, one, pathWithoutTimeout, postBashFailHook, promptHook, release, reply, resultOf, session, SHOP, startHook, stateOf, stopHook, timeoutSeen, type Box,
 } from './claude-skills-journey-fixtures.js';
 import { tmpRepo } from './helpers.js';
 
@@ -103,9 +102,8 @@ test('J16 control: the same days in a repo with .trail/ make the offer, and in o
 const DOCKER_ERR = 'Exit code 1\n--- FAIL: TestOrders (0.01s)\npanic: rootless Docker not found [recovered]\nFAIL\tacme/shop/orders\t0.412s';
 const GO_TEST = 'go test -tags integration ./...';
 const FIXED = 'DOCKER_HOST=unix://$HOME/.colima/default/docker.sock go test -tags integration ./...';
-const SYSTEM_TIMEOUT = FIXED_DIRS.filter((d) => !d.startsWith('$HOME')).some((d) => {
-  try { return statSync(join(d.replace('$USER', process.env.USER ?? ''), 'timeout')).isFile(); } catch { return false; }
-});
+/** A machine where Trail still finds a `timeout` (a system folder of 4.11, or Windows' System32) can't show a deny. */
+const SYSTEM_TIMEOUT = timeoutSeen();
 
 test('J16: walls and guardrails still apply in a repo Trail never ran in: the fix comes, the hit is noted, the deny holds; no repair offer', async () => {
   const b = plainBox('j16-walls');

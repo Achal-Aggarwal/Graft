@@ -71,7 +71,7 @@ export function repoRoots(repo: string): string[] {
   const common = git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (common && basename(common) === ".git") roots.add(dirname(common));
   for (const line of git(repo, ["worktree", "list", "--porcelain"]).split("\n")) {
-    if (line.startsWith("worktree ")) roots.add(line.slice("worktree ".length));
+    if (line.startsWith("worktree ")) roots.add(resolve(line.slice("worktree ".length)));
   }
   return [...roots];
 }
@@ -113,8 +113,13 @@ export function sameRepoRoots(repo: string, home: string = homedir()): string[] 
 
 /** Whether `path` is one of `roots` or inside one. */
 export function within(path: string, roots: string[]): boolean {
-  // Either separator: a transcript's cwd and git's worktree list don't always agree on Windows.
-  return roots.some((r) => path === r || path.startsWith(r + sep) || path.startsWith(r + "/"));
+  // On Windows a transcript's cwd says C:\a\b while git's worktree list says C:/a/b, and case doesn't matter.
+  const norm = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
+  const p = norm(path);
+  return roots.some((root) => {
+    const r = norm(root);
+    return p === r || p.startsWith(r + sep) || p.startsWith(r + "/");
+  });
 }
 
 /** Whether `dir` is a folder strictly above `path`. */

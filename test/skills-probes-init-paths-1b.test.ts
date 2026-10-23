@@ -158,7 +158,7 @@ test("a real trail init: its files read clean until the person edits one", () =>
   assert.deepEqual(Object.keys(rec ?? {}).sort(), [".claude/settings.json", ".claude/settings.local.json", ".trail/.gitignore", ".trail/README.md", ".trail/hook.cjs", ".trail/statusline.cjs"]);
   assert.equal(clean(b)?.ok, true);
   const settings = join(b.repo, ".claude", "settings.json");
-  writeFileSync(settings, readFileSync(settings, "utf8").replace("{", '{\n  "model": "opus",'));
+  writeFileSync(settings, readFileSync(settings, "utf8").replace(/^\{/, '{\n  "model": "opus",'));
   assert.equal(clean(b)?.ok, false);
 });
 

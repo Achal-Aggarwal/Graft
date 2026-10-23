@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { tmpRepo } from "./helpers.js";
 import { cloneShape } from "./anchors-clone-fixture.js";
 import { WIDE_SCAN_MS, wideAnchorsOf, wideGone, type WideAnchor } from "../src/skills/anchors-wide.js";
+import { binTarget } from "../src/skills/anchors-cli.js";
 import { goneAnchors } from "../src/skills/anchors.js";
 import type { ParsedSkill } from "../src/skills/types.js";
 import { timeBar } from "./machine-speed.js";
@@ -201,6 +202,10 @@ function cliBox(tag: string, src = CLI_SRC): Box {
   put(b, "src/util/log.ts", "export const log = (s: string) => s; // a file with no registrations\n");
   return b;
 }
+
+test("a bin target and a node <file> word are one form on every platform: dist/cli.js, never dist\\cli.js", () => {
+  for (const t of ["dist/cli.js", "./dist/cli.js", "dist\\cli.js", ".\\dist\\cli.js", "dist//cli.js"]) assert.equal(binTarget(t), "dist/cli.js", t);
+});
 
 test("subcommand: the fixture CLI with connect removed (the b92c22e shape) is gone; with it, not", () => {
   const b = cliBox("sub");

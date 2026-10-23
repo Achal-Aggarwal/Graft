@@ -8,19 +8,17 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { skillsPrefilter } from '../src/claude/pre-bash.js';
-import { FIXED_DIRS, SURE_FAIL_REASON } from '../src/trace/guard-fast.js';
+import { SURE_FAIL_REASON } from '../src/trace/guard-fast.js';
 import { sessionPath } from '../src/trace/gate-file.js';
 import { writeEveryRepo } from '../src/notes/every-repo.js';
 import { guardrailLearning } from '../src/notes/guardrails.js';
-import { at, box, done, hook, one, pathWithoutTimeout, preBashHook, session, type Box, type Session } from './claude-skills-journey-fixtures.js';
+import { at, box, done, hook, one, pathWithoutTimeout, preBashHook, session, timeoutSeen, type Box, type Session } from './claude-skills-journey-fixtures.js';
 
-/** A machine with a real `timeout` in a system folder of 4.11 can't show a deny: those tests say so and skip. */
-const SYSTEM_TIMEOUT = FIXED_DIRS.filter((d) => !d.startsWith('$HOME')).some((d) => {
-  try { return statSync(join(d.replace('$USER', process.env.USER ?? ''), 'timeout')).isFile(); } catch { return false; }
-}) && 'this machine has a timeout in a system folder';
+/** A machine where Trail still finds a `timeout` (a system folder of 4.11, or Windows' System32) can't show a deny: those tests say so and skip. */
+const SYSTEM_TIMEOUT = timeoutSeen();
 
 /** The person kept the no-timeout guardrail at init (J01's end). */
 function keepGuardrail(b: Box): void {

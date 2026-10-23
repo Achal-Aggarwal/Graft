@@ -15,8 +15,12 @@ import { cliAdd } from '../src/skills/save-gate.js';
 import { cliUpdate } from '../src/skills/update-gate.js';
 import { keepLessonCli } from '../src/skills/lesson-gate.js';
 import { sandboxLine, trailWritable } from '../src/skills/codex-sandbox.js';
+import { chmodDenialUnavailable } from './helpers.js';
 
 const ctxOf = (out: Record<string, any> | null): string => out?.hookSpecificOutput?.additionalContext ?? '';
+
+/** A refused write is made with chmod, which refuses nothing on Windows (or for root): those tests say so and skip. */
+const NO_DENIAL = chmodDenialUnavailable() ?? false;
 
 /** Makes each folder read-only for the call, then puts it back (so the temp home can be removed). */
 function readOnly<T>(dirs: string[], fn: () => T): T {
@@ -28,7 +32,7 @@ function readOnly<T>(dirs: string[], fn: () => T): T {
   }
 }
 
-test('sandboxLine is the 4.17 words; trailWritable probes skills and state (or the folder above one not made yet)', () => {
+test('sandboxLine is the 4.17 words; trailWritable probes skills and state (or the folder above one not made yet)', { skip: NO_DENIAL }, () => {
   assert.equal(sandboxLine('trail skills add release-npm --run r-1'),
     "trail · couldn't write ~/.trail from Codex's sandbox. The person can run the same command in their own terminal within 30 minutes: trail skills add release-npm --run r-1");
   const root = mkdtempSync(join(tmpdir(), 'c8-sbx-'));
@@ -46,7 +50,7 @@ test('sandboxLine is the 4.17 words; trailWritable probes skills and state (or t
   }
 });
 
-test('trail skills add from Codex with ~/.trail refused: nothing kept, the receipt unused; the same command in the person\'s terminal keeps it', async () => {
+test('trail skills add from Codex with ~/.trail refused: nothing kept, the receipt unused; the same command in the person\'s terminal keeps it', { skip: NO_DENIAL }, async () => {
   const b = box('c8-sbx-add', { env: { TRAIL_TIER_CODEX: 'A' } });
   try {
     const s = cxSession(b);
@@ -80,7 +84,7 @@ test('trail skills add from Codex with ~/.trail refused: nothing kept, the recei
   }
 });
 
-test('trail skills update and lesson from Codex with ~/.trail refused say the same, with their own command; other hosts are as they were', () => {
+test('trail skills update and lesson from Codex with ~/.trail refused say the same, with their own command; other hosts are as they were', { skip: NO_DENIAL }, () => {
   const root = mkdtempSync(join(tmpdir(), 'c8-sbx-rc-'));
   try {
     const home = join(root, 'home');

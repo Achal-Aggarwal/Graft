@@ -63,8 +63,16 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
  */
 const BASH_WRITE =
   /\bsed\s+(?:-[a-zA-Z]+\s+)*-i|\bperl\s+-[a-z]*i|\btee\s|(?:^|[^>&0-9])>>?\s*[\w./~-]+\.\w+|\bgit\s+apply\b|\bapply_patch\b|\bopen\([^)]*,\s*['"][wa]|\.write_text\(|\bwriteFileSync\(/m;
-/** File names in a command, by their extension. */
-const FILE_WORD = /[\w./-]+\.(?:go|tsx?|jsx?|mjs|cjs|py|rb|rs|java|kt|swift|cs|php|c|h|cc|cpp|hpp|scala|sql|ya?ml|json|toml|sh|css|scss|vue|svelte)\b/g;
+const CODE_EXT = '(?:go|tsx?|jsx?|mjs|cjs|py|rb|rs|java|kt|swift|cs|php|c|h|cc|cpp|hpp|scala|sql|ya?ml|json|toml|sh|css|scss|vue|svelte)';
+/**
+ * File names in a command, by their extension. On Windows a path also has a drive and backslashes
+ * (`C:\Users\me\shop\src\client.ts`, or `C:/Users/...` in Git Bash): without them only `client.ts`, or a
+ * path on the wrong drive, would be read.
+ */
+export function fileWordRe(platform: NodeJS.Platform = process.platform): RegExp {
+  return platform === 'win32' ? new RegExp(`(?:\\b[A-Za-z]:)?[\\w./\\\\~-]+\\.${CODE_EXT}\\b`, 'g') : new RegExp(`[\\w./-]+\\.${CODE_EXT}\\b`, 'g');
+}
+const FILE_WORD = fileWordRe();
 /** `cd <dir> &&` at the start of a command: where its relative paths start. */
 const LEADING_CD = /^\s*cd\s+(["']?)([^"'&;|]+?)\1\s*(?:&&|;)/;
 

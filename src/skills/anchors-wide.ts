@@ -17,7 +17,7 @@ import { lstatSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ParsedSkill } from './types.js';
 import { gitOf, readSmall, refOid } from './anchors-git.js';
-import { binsNear, cliNames, subcommandGone, type Cli } from './anchors-cli.js';
+import { binTarget, binsNear, cliNames, subcommandGone, type Cli } from './anchors-cli.js';
 import { leadingCds, simpleCommands } from '../trace/shell.js';
 import { programWords } from '../trace/shell-words.js';
 import { unquote } from '../trace/shell-scan.js';
@@ -192,7 +192,7 @@ function cliCall(w: string[], bins: Map<string, string>): { prog: string; x: str
   } else if (w[0] === 'node') {
     const t = w[1];
     if (!t || t.startsWith('-')) return null;
-    const n = t.replace(/^\.\//, '');
+    const n = binTarget(t);
     prog = [...bins].find(([, target]) => target === n)?.[0];
     i = 2;
   }

@@ -22,6 +22,8 @@ import { main as hooksMain } from '../src/claude/hooks.js';
 import { main as preBashMain } from '../src/claude/pre-bash.js';
 import { sessionPath } from '../src/trace/gate-file.js';
 import { cliAdd } from '../src/skills/save-gate.js';
+import { repoPlace } from '../src/notes/home.js';
+import { timeoutOnPath } from '../src/trace/guard-fast.js';
 import type { SkillSessionState } from '../src/trace/types.js';
 
 export const SHOP = 'github.com/acme/shop';
@@ -63,6 +65,19 @@ export function pathWithoutTimeout(): string {
   return noTimeout;
 }
 
+/**
+ * Why the no-timeout guardrail can't deny on this machine, or false: Trail still finds a `timeout` once PATH is
+ * cleared of the ones a test can hide (and with a home of no folders). A system folder of 4.11 holds one (Homebrew's
+ * coreutils), or this is Windows, which ships System32\timeout.exe on every PATH: a `timeout N` command never
+ * surely fails there, so the deny never comes, by design.
+ */
+export function timeoutSeen(): string | false {
+  const home = join(tmpdir(), 'no-timeout-home-none');
+  const env = { PATH: pathWithoutTimeout(), PATHEXT: process.env.PATHEXT, HOME: home, USER: process.env.USER };
+  if (!timeoutOnPath(env)) return false;
+  return process.platform === 'win32' ? 'Windows has System32\\timeout.exe on every PATH' : 'this machine has a timeout in a system folder';
+}
+
 let boxes = 0;
 
 /** Skills on since August, offers on, the repo index pointing /home/dev/shop at acme/shop. */
@@ -77,7 +92,9 @@ export function box(tag: string, opts: { settings?: Record<string, unknown>; env
   const project = join(root, 'project');
   for (const d of [home, join(trail, 'repos'), project]) mkdirSync(d, { recursive: true });
   writeFileSync(join(trail, 'settings.json'), JSON.stringify({ v: 1, skills: 'on', onSince: '2026-08-01T00:00:00.000Z', ...opts.settings }));
-  writeFileSync(join(trail, 'repos', 'index.json'), JSON.stringify({ aliases: { 'local/home-dev-shop': SHOP }, roots: {} }));
+  // CWD's own key, as Trail makes it here: `local/home-dev-shop`, or `local/d-home-dev-shop` on Windows (the drive).
+  const local = repoPlace(CWD, { TRAIL_HOME: trail }).key;
+  writeFileSync(join(trail, 'repos', 'index.json'), JSON.stringify({ aliases: { [local]: SHOP }, roots: {} }));
   // The prompt hook's graph ask: answers nothing, at once.
   const stub = join(root, 'ask-stub.mjs');
   writeFileSync(stub, 'process.stdout.write("null");\n');

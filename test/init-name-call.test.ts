@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyName, nameItems, nameLine, validName } from "../src/init/name-call.js";
 import { compiled, skillCandidate } from "./init-screen-fixtures.js";
+import { jsLit } from "./escape.js";
 
 const TYPED = ["always publish with the beta tag first", "explain it simply, one example first"];
 const HOWTO = "To publish: npm version patch, npm publish, then npm view acme-cli version.";
@@ -22,10 +23,10 @@ function standIn(answer: unknown, opts: { fail?: string } = {}): { bin: string; 
   writeFileSync(join(bin, "claude"), [
     "#!/usr/bin/env node",
     `const fs = require("fs");`,
-    `if (process.argv.includes("--version")) { fs.appendFileSync(${JSON.stringify(join(bin, "version-calls"))}, "v\\n"); console.log("9.9.9"); process.exit(0); }`,
-    `fs.appendFileSync(${JSON.stringify(join(bin, "calls"))}, "-p\\n");`,
-    `fs.writeFileSync(${JSON.stringify(join(bin, "args"))}, JSON.stringify(process.argv));`,
-    `let s = ""; process.stdin.on("data", (b) => (s += b)); process.stdin.on("end", () => { fs.writeFileSync(${JSON.stringify(join(bin, "sent"))}, s); console.log(${JSON.stringify(out)}); process.exit(${opts.fail ? 1 : 0}); });`,
+    `if (process.argv.includes("--version")) { fs.appendFileSync(${jsLit(join(bin, "version-calls"))}, "v\\n"); console.log("9.9.9"); process.exit(0); }`,
+    `fs.appendFileSync(${jsLit(join(bin, "calls"))}, "-p\\n");`,
+    `fs.writeFileSync(${jsLit(join(bin, "args"))}, JSON.stringify(process.argv));`,
+    `let s = ""; process.stdin.on("data", (b) => (s += b)); process.stdin.on("end", () => { fs.writeFileSync(${jsLit(join(bin, "sent"))}, s); console.log(${jsLit(out)}); process.exit(${opts.fail ? 1 : 0}); });`,
   ].join("\n"));
   chmodSync(join(bin, "claude"), 0o755);
   return {

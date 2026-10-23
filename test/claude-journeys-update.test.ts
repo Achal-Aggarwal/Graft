@@ -104,7 +104,9 @@ test('J15 D: a hand-edited skill that needs a fix gets only a proposal beside it
     assert.equal(proposal, true, lines.join('\n'));
     assert.match(lines[0]!, /^--- release-npm\/SKILL\.md \(yours\)$/);
     // Trail's home is outside HOME here, so the cp line names it in full.
-    assert.equal(lines.at(-1), `Tell the person: you changed release-npm by hand, so Trail left it alone and wrote the change beside it. To use it, they run this in their own terminal: cp ${b.trail}/skills/release-npm/.versions/proposed-v2/SKILL.md ${b.trail}/skills/release-npm/SKILL.md (their edited file is kept in .versions/hand-2026-10-27)`);
+    // In forward slashes, which every Windows shell takes.
+    const fwd = b.trail.replace(/\\/g, '/');
+    assert.equal(lines.at(-1), `Tell the person: you changed release-npm by hand, so Trail left it alone and wrote the change beside it. To use it, they run this in their own terminal: cp ${fwd}/skills/release-npm/.versions/proposed-v2/SKILL.md ${fwd}/skills/release-npm/SKILL.md (their edited file is kept in .versions/hand-2026-10-27)`);
     assert.equal(readFileSync(ref.file, 'utf8'), mine, 'the person\'s file is never written');
     assert.ok(existsSync(join(b.trail, 'skills', 'release-npm', '.versions', 'proposed-v2', 'SKILL.md')));
     assert.deepEqual(listVersions(ref), [], 'no version written');

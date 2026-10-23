@@ -18,6 +18,7 @@ import { RELAY_LINE } from "../src/init/relay.js";
 import { repoPlace } from "../src/notes/home.js";
 import type { PsRow } from "../src/skills/person.js";
 import { day, done, releaseJob, Tx, world, type World } from "./init-mine-fixtures.js";
+import { jsLit } from "./escape.js";
 
 const ME = 4242;
 /** A process table with no claude and no pty wrapper above this process, or with one. */
@@ -75,9 +76,9 @@ function standIn(): { bin: string; calls: () => number; versions: () => boolean 
   writeFileSync(join(bin, "claude"), [
     "#!/usr/bin/env node",
     `const fs = require("fs");`,
-    `if (process.argv.includes("--version")) { fs.appendFileSync(${JSON.stringify(join(bin, "version-calls"))}, "v\\n"); console.log("9.9.9"); process.exit(0); }`,
-    `fs.appendFileSync(${JSON.stringify(join(bin, "calls"))}, "-p\\n");`,
-    `process.stdin.resume(); process.stdin.on("end", () => { const s = ${JSON.stringify(answer)}; console.log(s); });`,
+    `if (process.argv.includes("--version")) { fs.appendFileSync(${jsLit(join(bin, "version-calls"))}, "v\\n"); console.log("9.9.9"); process.exit(0); }`,
+    `fs.appendFileSync(${jsLit(join(bin, "calls"))}, "-p\\n");`,
+    `process.stdin.resume(); process.stdin.on("end", () => { const s = ${jsLit(answer)}; console.log(s); });`,
   ].join("\n"));
   chmodSync(join(bin, "claude"), 0o755);
   return {
