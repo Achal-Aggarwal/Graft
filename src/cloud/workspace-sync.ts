@@ -308,6 +308,19 @@ interface SyncState {
   at: number;
   failedAt?: number;
   learnings?: number;
+  /** HEAD's paths (learnings and skills) the last sync sent, and the branch it was on. */
+  paths?: string[];
+  branch?: string;
+}
+
+/** The checkout's branch, or "" when git can't say (detached HEAD, no git). */
+function currentBranch(checkout: string): string {
+  try {
+    const b = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: checkout, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
+    return b === "HEAD" ? "" : b;
+  } catch {
+    return "";
+  }
 }
 
 function statePath(repo: string): string {
@@ -329,6 +342,11 @@ export function inWorkspace(checkout: string, cloud: Cloud | null = readCloud())
  * a repo in the workspace. Remembers what was sent so an unchanged repo isn't
  * sent again. When git can't read HEAD nothing is sent and the sync counts as
  * failed, so it's tried again later.
+ *
+ * A learning or skill HEAD had at the last sync on this same branch, and no
+ * longer has (deleted, or now left out for a secret), is sent as removed, so
+ * it comes down from the web. On another branch a missing file says nothing,
+ * so switching branches never takes anything down.
  */
 export async function syncRepo(
   checkout: string,
@@ -338,14 +356,24 @@ export async function syncRepo(
   const place = repoPlace(checkout);
   if (!cloud.repos.includes(place.key)) return { error: "this repo isn't in your workspace" };
   if (opts.fetch !== false) refreshBranches(place.checkout);
-  const learnings = learningsPayload(place.checkout);
-  const res: Awaited<ReturnType<typeof uploadLearnings>> = learnings
-    ? await uploadLearnings(cloud, { repo: { key: place.key, name: repoName(place.key, place.checkout) }, learnings }, opts.fetchImpl)
-    : { error: "git couldn't read this repo's learnings at HEAD" };
+  const found = workspaceLearnings(place.checkout);
+  const learnings = found?.learnings ?? null;
   const prior = readJson<SyncState>(statePath(place.checkout));
+  const branch = currentBranch(place.checkout);
+  const paths = (learnings ?? []).filter((l) => l.ref === "").map((l) => l.path);
+  const here = new Set(paths);
+  const removed = branch && prior?.branch === branch ? (prior.paths ?? []).filter((p) => !here.has(p)) : [];
+  const held = found?.leftOut.length ?? 0;
+  const res: Awaited<ReturnType<typeof uploadLearnings>> = learnings
+    ? await uploadLearnings(
+        cloud,
+        { repo: { key: place.key, name: repoName(place.key, place.checkout) }, learnings, ...(removed.length ? { removed } : {}), ...(held ? { held } : {}) },
+        opts.fetchImpl,
+      )
+    : { error: "git couldn't read this repo's learnings at HEAD" };
   if (isError(res)) writeJsonAtomic(statePath(place.checkout), { ...(prior ?? { fingerprint: "", at: 0 }), failedAt: Date.now() }, true);
   else if (learnings) {
-    writeJsonAtomic(statePath(place.checkout), { fingerprint: fingerprint(learnings), at: Date.now(), learnings: res.learnings }, true);
+    writeJsonAtomic(statePath(place.checkout), { fingerprint: fingerprint(learnings), at: Date.now(), learnings: res.learnings, paths, branch }, true);
     rememberSent(place.key, learnings);
   }
   return res;

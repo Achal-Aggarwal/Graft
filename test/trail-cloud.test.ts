@@ -163,6 +163,48 @@ test("a repo outside the workspace is never uploaded", async () => {
   assert.equal(sent.length, 0);
 });
 
+// Built from parts so the repo's own secret scanners don't flag the test.
+const FAKE_KEY = "AKIA" + "Z7Q2" + "X9W4" + "V6B3" + "N8M1";
+
+test("a learning deleted at HEAD is taken down; switching branches never takes anything down", async () => {
+  const { maya } = team();
+  const keep = writeNote(maya, { title: "Keep the default retry count at 4", body: BODY, author: "Maya", date: "2026-10-09" }).path;
+  const gone = writeNote(maya, { title: "Backoff caps", body: BODY, author: "Maya", date: "2026-10-09" }).path;
+  const commit = (msg: string) => {
+    git(maya, "add", "-A");
+    git(maya, "-c", "user.name=Maya", "-c", "user.email=m@x", "commit", "-qm", msg);
+  };
+  commit("learnings");
+  const { cloud, sent, fetchImpl } = cloudFor(["github.com/acme/retry"]);
+  const sync = async () => {
+    sent.length = 0;
+    const res = await syncRepo(maya, cloud, { fetch: false, fetchImpl });
+    assert.ok(!("error" in res), JSON.stringify(res));
+    return sent[0]!.body;
+  };
+
+  assert.equal((await sync()).removed, undefined, "first sync: nothing to take down");
+  rmSync(gone);
+  assert.equal((await sync()).removed, undefined, "deleted but not committed: HEAD still has it");
+  commit("drop backoff caps");
+  assert.deepEqual((await sync()).removed, [".trail/learnings/2026-10-09-backoff-caps-maya.md"]);
+  assert.equal((await sync()).removed, undefined, "taken down once");
+
+  // A learning that later picks up a secret is taken down too, and counted as held.
+  writeFileSync(keep, readFileSync(keep, "utf8") + `\nkey ${FAKE_KEY}\n`);
+  commit("oops");
+  const leaked = await sync();
+  assert.deepEqual(leaked.removed, [".trail/learnings/2026-10-09-keep-the-default-retry-count-at-maya.md"]);
+  assert.equal(leaked.held, 1);
+  assert.ok(!JSON.stringify(leaked).includes(FAKE_KEY));
+
+  // On another branch the files aren't there, but nobody deleted them. HEAD~3 is the commit before any learning.
+  git(maya, "checkout", "-qf", "-b", "elsewhere", "HEAD~3");
+  const away = await sync();
+  assert.deepEqual(away.learnings.filter((l: any) => l.ref === ""), []);
+  assert.equal(away.removed, undefined, "a branch switch takes nothing down");
+});
+
 /** One use of the learnings in `repo`, at `at`. */
 function use(repo: string, kind: "search" | "check", at = new Date().toISOString()) {
   return { repo, kind, asker: "Kumar", session: "s1", file_count: 1, shown_paths: ["a.md"], shown_authors: ["Maya"], at };
