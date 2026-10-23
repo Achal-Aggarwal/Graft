@@ -22,7 +22,8 @@ import { skillName } from "../skills/skills.js";
 import { newState } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
-import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, trailUrl, writeCloud, type Cloud } from "./workspace.js";
+import { machinePayload, otherRepos, setUpPicked, type OtherRepo } from "./other-repos.js";
+import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, sendMachineRepos, trailUrl, writeCloud, type Cloud } from "./workspace.js";
 
 /** A pair code as the onboarding page prints it: letters and digits. */
 export function validPairCode(code: string): boolean {
@@ -243,10 +244,16 @@ export interface FinishOptions {
   now?: () => number;
   /** How long to wait for the person, all told. */
   waitMs?: number;
+  /** The laptop's other repos to offer; found from Claude Code's sessions by default. */
+  otherRepos?: (exceptKey: string) => OtherRepo[];
+  /** Sets up a picked repo's agents and map; `trail init --yes` by default. */
+  initRepo?: (checkout: string) => Promise<boolean>;
 }
 
 /** Wait an hour at most for someone to sign up, connect and review. */
 const FINISH_WAIT_MS = 60 * 60 * 1000;
+/** Once the review is in, how much longer to wait for a pick of the other repos. */
+const PICK_AFTER_REVIEW_MS = 10 * 60 * 1000;
 
 /**
  * What `_trail-pair` runs: wait for the person to connect in the browser, save
@@ -275,10 +282,24 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
     await sleep(1500);
   }
 
+  // The laptop's other repos go to the page by name; the ones the person
+  // picks are set up while they carry on, alongside the review below.
+  const place = repoPlace(repo);
+  const others = (opts.otherRepos ?? otherRepos)(place.key);
+  const offered = await sendMachineRepos(cloud, state, machinePayload(others), opts.fetchImpl);
+  let reviewedAt = 0;
+  const pickLate = () => late() || (reviewedAt > 0 && now() - reviewedAt >= PICK_AFTER_REVIEW_MS);
+  const extra = !isError(offered) && others.length
+    ? setUpPicked(cloud, state, others, { fetchImpl: opts.fetchImpl, sleep, late: pickLate, initRepo: opts.initRepo }).catch(() => [] as string[])
+    : Promise.resolve([] as string[]);
+
   // Trail turns progress away once the review is in: that's the signal.
   for (;;) {
     const r = await postHandoffProgress(base, { state }, opts.fetchImpl);
-    if (r === "reviewed") break;
+    if (r === "reviewed") {
+      reviewedAt = now();
+      break;
+    }
     if (r === "gone") return "expired";
     if (late()) return "timed_out";
     await sleep(2000);
@@ -290,8 +311,11 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
     cloud = { ...cloud, user: me.user, workspace: me.workspace, repos: me.repos.map((r) => r.key) };
     writeCloud(cloud);
   }
-  const place = repoPlace(repo);
-  if (!place.git) return "uploaded";
-  const res = await syncRepo(place.checkout, readCloud() ?? cloud, { fetch: false, fetchImpl: opts.fetchImpl });
-  return isError(res) ? "failed" : "uploaded";
+  const res = place.git ? await syncRepo(place.checkout, readCloud() ?? cloud, { fetch: false, fetchImpl: opts.fetchImpl }) : null;
+  // The picked repos joined the workspace too: save them with the rest.
+  if ((await extra).length) {
+    const after = await fetchMe(cloud, opts.fetchImpl);
+    if (!isError(after)) writeCloud({ ...(readCloud() ?? cloud), repos: after.repos.map((r) => r.key) });
+  }
+  return res && isError(res) ? "failed" : "uploaded";
 }

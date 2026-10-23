@@ -122,7 +122,7 @@ test("the child waits for the connect, then the review, and only then uploads", 
     if (c.path === "/api/cli/learnings") return { status: 200, body: { learnings: 1, added: 0 } };
     return { status: 404, body: { error: "not found" } };
   });
-  const outcome = await finishPair("s".repeat(32), dir, { fetchImpl: t.fetch, sleep: async () => {} });
+  const outcome = await finishPair("s".repeat(32), dir, { fetchImpl: t.fetch, sleep: async () => {}, otherRepos: () => [] });
   assert.equal(outcome, "uploaded");
 
   const order = t.calls.map((c) => c.path);
@@ -137,7 +137,7 @@ test("the child waits for the connect, then the review, and only then uploads", 
 test("an expired link stops the child without uploading", async () => {
   freshHome();
   const t = fakeTrail(() => ({ status: 410, body: { error: "gone" } }));
-  const outcome = await finishPair("s".repeat(32), repo(), { fetchImpl: t.fetch, sleep: async () => {} });
+  const outcome = await finishPair("s".repeat(32), repo(), { fetchImpl: t.fetch, sleep: async () => {}, otherRepos: () => [] });
   assert.equal(outcome, "expired");
   assert.equal(t.calls.some((c) => c.path === "/api/cli/learnings"), false);
 });
