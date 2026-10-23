@@ -30,6 +30,8 @@ export interface SessionState {
    * nothing the person typed is kept (spec section 6). Optional so files
    * written before it still parse. */
   promptAsks?: number;
+  /** The repo skills this session used, by name, to when it last went to the workspace as a run (skill-use.ts). */
+  skillsUsed?: Record<string, number>;
   graftReads: number; sourceReads: number;
   /** Cumulative tokens saved this session via `ask --source` retrieval (est.). */
   savedTokens: number;
