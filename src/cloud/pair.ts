@@ -195,6 +195,8 @@ export class PairRun {
       const payload = reviewPayload(place.checkout);
       const item = (l: (typeof payload)[number]) => ({
         kind: l.kind === "skill" ? "skill" : "decision", path: l.path, title: l.title, author: l.author, body: l.body, hash: l.hash, touches: l.touches,
+        // A skill's description is what the page and Claude read to pick it; the review saves what it's given.
+        ...(l.why ? { why: l.why } : {}),
       });
       items.push(...payload.filter((l) => l.kind !== "skill").map(item), ...payload.filter((l) => l.kind === "skill").map(item));
     }
