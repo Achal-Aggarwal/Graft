@@ -59,6 +59,23 @@ function fakeTrail(answer: (c: Call, calls: Call[]) => { status: number; body?: 
   return { fetch: f, calls };
 }
 
+test("a repo skill goes to the review with its description, so the page never blanks it", async () => {
+  freshHome();
+  const dir = repo();
+  mkdirSync(join(dir, ".claude", "skills", "cut-a-release"), { recursive: true });
+  writeFileSync(join(dir, ".claude", "skills", "cut-a-release", "SKILL.md"), "---\nname: cut-a-release\ndescription: Tag and publish a release. Use when someone asks to ship.\n---\n1. Run the tests.\n2. Tag it.\n");
+  git(dir, ["add", "-A", "-f"]);
+  git(dir, ["commit", "-q", "-m", "skill"]);
+  const t = okTrail();
+  const run = await PairRun.start(dir, "X4GM5OQU4NIA65ZR", { agent: "claude", version: "0.25.0", fetchImpl: t.fetch });
+  assert.ok(run instanceof PairRun);
+  await run.finish(dir);
+  const found = progressCalls(t).flatMap((c) => (c.body.found as { kind: string; title: string; why?: string }[] | undefined) ?? []);
+  const skill = found.find((f) => f.kind === "skill");
+  assert.equal(skill?.why, "Tag and publish a release. Use when someone asks to ship.");
+  assert.equal(found.find((f) => f.kind !== "skill")?.why, undefined, "a learning sends none: it has no description field");
+});
+
 test("pair codes are letters and digits from the onboarding page", () => {
   assert.equal(validPairCode("X4GM5OQU4NIA65ZR"), true);
   assert.equal(validPairCode("abc"), false);
