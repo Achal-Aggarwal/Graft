@@ -270,11 +270,11 @@ function trailServerIn(t: McpTarget): boolean {
 export function registerMcpConfigs(
   repo: string,
   ids: string[],
-  opts: { home?: string; global?: boolean; name?: Brand } = {},
+  opts: { home?: string; global?: boolean; name?: Brand; laptop?: string[] } = {},
 ): McpWrite[] {
   const name = opts.name ?? 'graft';
   return mcpTargets(repo, ids, opts)
-    .filter((t) => opts.global !== false || t.scope !== 'global')
+    .filter((t) => t.scope !== 'global' || (opts.global !== false && (opts.laptop === undefined || opts.laptop.includes(t.hostId))))
     .map((t) => {
       if (name === 'graft' && t.scope === 'global' && trailServerIn(t)) return { id: t.id, path: t.path, action: 'unchanged' as const };
       return t.format === 'toml'

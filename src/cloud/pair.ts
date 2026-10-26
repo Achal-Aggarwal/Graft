@@ -41,13 +41,16 @@ interface Phase {
 
 /**
  * What init found out beyond the learnings, for the onboarding page: one
- * lookup's token saving, the sessions read, and teammates' branches on this
- * person's files. An empty `teammates` list means "checked, none".
+ * lookup's token saving, the sessions read, teammates' branches on this
+ * person's files, and the agents set up here. An empty `teammates` list means
+ * "checked, none".
  */
 export interface PairFindings {
   tokens?: TokensSummary | null;
   sessions?: number;
   teammates?: TeammateSummary[];
+  /** `--agents auto`: the agents set up and working on this laptop, the one running init first ("claude", "cursor", "codex", ...). */
+  agents?: string[];
 }
 
 /**
@@ -176,6 +179,7 @@ export class PairRun {
     if (f.tokens) out.tokens = f.tokens;
     if (f.sessions !== undefined) out.sessions = f.sessions;
     if (f.teammates !== undefined) out.teammates = f.teammates;
+    if (f.agents !== undefined) out.agents = f.agents;
     this.send({ findings: out });
   }
 

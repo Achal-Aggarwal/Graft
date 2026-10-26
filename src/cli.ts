@@ -24,6 +24,7 @@ import { statuslineWanted } from "./claude/settings-merge.js";
 import { runHostsInit } from "./hosts/init.js";
 import { codexStatusLines, codexTrustLine } from "./hosts/codex-trust.js";
 import { hostIds } from "./hosts/registry.js";
+import { agentList, autoSelection, autoSummary } from "./hosts/auto.js";
 import { checkoutRoot, ensureRepoHome, keepsNotes, noteCount, rememberRepo, repoName, repoPlace, shownPath } from "./notes/home.js";
 import { brand, cmd, graftNotice, strandedRepoNotice, tag } from "./brand.js";
 import { branchDiff } from "./cloud/diff.js";
@@ -451,8 +452,10 @@ function moveHereToTrail(dir: string): void {
   const flags = [o.global ? null : "--no-global", o.mcp ? null : "--no-mcp", o.hooks ? null : "--no-hooks", o.statusline ? null : "--no-statusline"].filter(
     (f): f is string => f !== null,
   );
-  console.log(`· moving this repo to trail: trail init ${hosts.length ? `--agents ${hosts.join(" ")} ` : ""}${flags.join(" ")}`.trimEnd());
-  spawnSync("trail", ["init", root, "--agents", ...hosts, ...flags], { stdio: "inherit" });
+  // An `--agents auto` run moves the same way: every agent's repo files, laptop settings for the ones installed.
+  const agents = o.laptop ? ["auto"] : hosts;
+  console.log(`· moving this repo to trail: trail init ${agents.length ? `--agents ${agents.join(" ")} ` : ""}${flags.join(" ")}`.trimEnd());
+  spawnSync("trail", ["init", root, "--agents", ...agents, ...flags], { stdio: "inherit" });
 }
 
 grouped(program.command("build"), GROUP.setup)
@@ -1178,7 +1181,7 @@ grouped(program.command("init"), GROUP.setup)
   )
   .argument("[dir]", "target repo directory", ".")
   .option("--no-build", "skip building the graph (wire files only)")
-  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude)`)
+  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude), or auto: every agent's repo files, plus laptop settings for the agents installed here`)
   .option("--all-agents", "write instruction files for every known agent, detected or not")
   .option("--no-agents", "Claude Code wiring only; skip other agents")
   .option("--list-agents", "list known agent ids and exit")
@@ -1457,7 +1460,7 @@ function shown(repo: string, path: string): string {
 const AGENT_ALIASES: Record<string, string> = { codex: "agents", opencode: "agents" };
 
 /** `graft init`. */
-async function runInitCommand(dir: string, opts: InitOptions, progress?: InitProgress): Promise<{ ids: string[] } | null> {
+async function runInitCommand(dir: string, opts: InitOptions, progress?: InitProgress): Promise<{ ids: string[]; laptop: string[] } | null> {
     if (opts.listAgents) {
       for (const id of [...hostIds(), "claude"]) console.log(id);
       return null;
@@ -1466,7 +1469,13 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // Codex and OpenCode read AGENTS.md: `--agents codex` means that wiring.
     // The name as given is kept for Trail's onboarding page.
     const asked = Array.isArray(opts.agents) ? opts.agents : undefined;
-    const explicit = asked ? [...new Set(asked.map((id) => AGENT_ALIASES[id] ?? id))] : undefined;
+    // `--agents auto`: the website's one setup prompt, run by an agent with no one to ask.
+    const auto = asked?.includes("auto") === true;
+    if (auto && asked!.length > 1) {
+      console.error("✗ --agents auto picks the agents itself: give it on its own, or name the agents instead");
+      process.exit(1);
+    }
+    const explicit = asked && !auto ? [...new Set(asked.map((id) => AGENT_ALIASES[id] ?? id))] : undefined;
 
     // Checked before anything is written: run from the home folder, init wired
     // it, mapped every code file under it, then said to commit.
@@ -1495,11 +1504,15 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const detectedIds = plan.filter((p) => p.detected).map((p) => p.id);
     const noAgents = (opts as { agents?: unknown }).agents === false;
 
+    // auto: every agent's repo files; out-of-repo writes only for `laptop`, the agents installed here and the caller.
+    const autoSel = auto ? autoSelection({ home, repo }) : null;
+    const laptop = autoSel?.laptop;
     let ids: string[];
     // The consent answer from the picker. Undefined everywhere else — a scripted
     // or flag-driven init never asked, so it must not silently answer.
     let consent: boolean | undefined;
-    if (explicit) ids = explicit;
+    if (autoSel) ids = autoSel.repo;
+    else if (explicit) ids = explicit;
     else if (opts.allAgents) ids = plan.map((p) => p.id);
     else if (noAgents) ids = ["claude"];
     else if (opts.yes || opts.dryRun) ids = detectedIds;
@@ -1539,9 +1552,11 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const targets = [repo, ...children.map((c) => join(repo, c))];
 
     if (opts.dryRun) {
-      console.error(formatPlan(plan, ids, repo, home));
+      if (autoSel)
+        console.error(`· --agents auto: repo files for every agent; laptop settings for ${autoSel.agents.length ? agentList(autoSel.agents) : "none (no agent found here)"}\n`);
+      console.error(formatPlan(laptopOnly(plan, laptop), ids, repo, home));
       for (const child of children)
-        console.error(`\n· ${child}/ (workspace child)\n` + formatPlan(planInit(join(repo, child), { home }), ids, join(repo, child), home));
+        console.error(`\n· ${child}/ (workspace child)\n` + formatPlan(laptopOnly(planInit(join(repo, child), { home }), laptop), ids, join(repo, child), home));
       return null;
     }
     if (ids.length === 0) {
@@ -1559,7 +1574,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         process.exitCode = 1;
         return null;
       }
-      const started = await PairRun.start(repo, opts.pair, { agent: asked?.[0] ?? ids[0]!, version: currentVersion });
+      const started = await PairRun.start(repo, opts.pair, { agent: autoSel ? autoSel.agent : asked?.[0] ?? ids[0]!, version: currentVersion });
       if ("error" in started) {
         console.error(`⚠ couldn't tell Trail about this run (${started.error}); setting up here anyway`);
       } else {
@@ -1591,7 +1606,8 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // sessions and PR reviews while the rest of init runs, and offer what came
     // up at the end. Nothing is kept without a tick (see src/init/review.ts).
     const tty = Boolean(process.stdin.isTTY && process.stderr.isTTY);
-    const lookBack = TRAIL && wantClaude ? beginLookBack(repo, { plain: opts.plain === true, again: opts.lookBack === true }) : null;
+    // Past Claude sessions are on this laptop only where Claude Code is.
+    const lookBack = TRAIL && wantClaude && (!laptop || laptop.includes("claude")) ? beginLookBack(repo, { plain: opts.plain === true, again: opts.lookBack === true }) : null;
     for (const line of lookBack?.lines ?? []) console.error(line);
     if (pair) {
       if (lookBack?.reads.lb) pair.phase("decisions", "running", "", "Reading past Claude sessions");
@@ -1609,8 +1625,11 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const reports: WireReport[] = [];
     for (const target of targets) {
       if (verbose && target !== repo) console.error(`\n· ${relative(repo, target)}/`);
-      reports.push(wireTarget(target, ids, { home, cliPath, plan, opts, wantClaude, quiet: !verbose }));
+      reports.push(wireTarget(target, ids, { home, cliPath, plan, opts, wantClaude, quiet: !verbose, laptop }));
     }
+    // The agents now working on this laptop, for Trail's page, as soon as they are.
+    if (pair && autoSel) pair.findings({ agents: autoSel.agents });
+    if (verbose && autoSel) console.error(`✓ ${autoSummary(autoSel.agents)}`);
 
     // The graph, built once after the wiring: a workspace parent's build is
     // the workspace build, so it covers every child.
@@ -1668,10 +1687,13 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const writesFor = (id: string) =>
         (plan.find((p) => p.id === id)?.writes ?? []).filter((w) => opts.global !== false || w.scope !== "global");
       if (graphLine) console.error(graphLine);
-      const width = Math.max(...ids.map((id) => id.length));
-      for (const id of ids) {
-        const summary = compactWrites(writesFor(id), repo, home);
-        console.error(`✓ ${id.padEnd(width)}   ${summary}`.trimEnd());
+      if (autoSel) console.error(`✓ ${autoSummary(autoSel.agents)}`);
+      else {
+        const width = Math.max(...ids.map((id) => id.length));
+        for (const id of ids) {
+          const summary = compactWrites(writesFor(id), repo, home);
+          console.error(`✓ ${id.padEnd(width)}   ${summary}`.trimEnd());
+        }
       }
     }
 
@@ -1786,7 +1808,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       // is left out, since an empty list would say "checked, none".
       const teammates = teammatesChecked(repo, { learnings: teamNotes });
       pair.teamDone(teammates);
-      pair.findings({ tokens, sessions: lookBack?.reads.lb ? sessionsRead : undefined, teammates });
+      pair.findings({ tokens, sessions: lookBack?.reads.lb ? sessionsRead : undefined, teammates, ...(autoSel ? { agents: autoSel.agents } : {}) });
       await pair.finish(repo, skillsFound);
       pair.handOff(repo);
       console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);
@@ -1806,7 +1828,13 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       { agents: [...ids].sort().join(","), consent: consent === undefined ? "unasked" : String(consent) },
       { repo },
     );
-    return { ids };
+    return { ids, laptop: laptop ?? ids };
+}
+
+/** A plan with the out-of-repo writes only for `laptop`'s hosts; the plan itself when every host may write there. */
+function laptopOnly(plan: ReturnType<typeof planInit>, laptop: string[] | undefined): ReturnType<typeof planInit> {
+  if (!laptop) return plan;
+  return plan.map((p) => (laptop.includes(p.id) ? p : { ...p, writes: p.writes.filter((w) => w.scope === "repo") }));
 }
 
 /**
@@ -1886,7 +1914,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
   await reporter.stage("done");
   await reporter.flush();
   // Claude Code gets the workspace's tools and skills through one user-level `trail` entry.
-  const brainsEntry = res.ids.includes("claude") && opts.global !== false ? installBrainsServer(homedir()) : null;
+  const brainsEntry = res.laptop.includes("claude") && opts.global !== false ? installBrainsServer(homedir()) : null;
   if (sent) {
     const parts = [
       tokens ? `one lookup saved ${tokens.pct}% of the tokens` : null,
@@ -1923,6 +1951,8 @@ function wireTarget(
     /** Collect warnings and removals instead of printing a line per file, and
      *  leave the graph build to the caller (see buildGraphWithProgress). */
     quiet?: boolean;
+    /** When given, only these hosts write outside the repo (`--agents auto`). */
+    laptop?: string[];
   },
 ): WireReport {
     const { home, cliPath, plan, wantClaude } = ctx;
@@ -1952,7 +1982,8 @@ function wireTarget(
       // `global`/`home` are threaded through alongside `statusline`: the claude layer
       // writes under `~/.claude` now (hosts/claude-global.ts), so --no-global has to
       // reach it or the flag would silently mean "no out-of-repo writes, except three".
-      const res = runInit(repo, { build: opts.build, cliPath, statusline: wantStatusline, global: opts.global, home, brand: brand() });
+      const claudeGlobal = opts.global !== false && (!ctx.laptop || ctx.laptop.includes("claude"));
+      const res = runInit(repo, { build: opts.build, cliPath, statusline: wantStatusline, global: claudeGlobal, home, brand: brand() });
       say(`✓ wrote ${res.settingsPath}`);
       for (const s of res.shims) say(`✓ wrote ${s}`);
       if (res.skill) say(`✓ wrote ${res.skill}`);
@@ -1979,6 +2010,7 @@ function wireTarget(
         mcp: opts.mcp,
         hooks: opts.hooks,
         global: opts.global,
+        laptop: ctx.laptop,
         brand: brand(),
       });
       for (const w of r.written) say(`✓ ${w.id}: ${w.path} (${w.action})`);
@@ -2005,6 +2037,7 @@ function wireTarget(
       mcp: opts.mcp !== false,
       hooks: opts.hooks !== false,
       statusline: wantStatusline,
+      ...(ctx.laptop ? { laptop: ctx.laptop } : {}),
     });
 
     // Every host's wiring points at graft/, so the graph is built whatever was
