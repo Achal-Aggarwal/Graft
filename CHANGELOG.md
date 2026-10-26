@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.26.0
+
+### Added
+
+- **One setup for every agent.** `trail init --agents auto` sets Trail up
+  without asking. It writes the repo files for Claude Code, Cursor, Codex and
+  OpenCode, so a teammate on one of them is covered once you commit, and this
+  laptop's settings only for the agents installed here, plus the one running
+  it. The Trail page now gives everyone the same setup prompt and says which
+  agents were set up.
+- **The first setup finds what reviewers flagged.** When a coding agent runs
+  the setup prompt from Trail's page, Trail now reads the repo's merged PR
+  reviews too, so the page shows real learnings on the first run instead of
+  none.
+- **Claude Code gets the workspace connector.** Once a laptop is paired,
+  `trail mcp` passes the workspace's tools, skill prompts and instructions
+  through to Claude Code, the same ones Claude.ai gets. No second sign-in.
+  Your repo's own tools still win on a name clash, and if Trail can't be
+  reached the repo tools keep working.
+- **Always follow.** `trail note --always-follow` marks a learning your agent
+  holds to even when asked otherwise. It says which learning it is and who
+  added it. An agent can only set it when you said so in this session.
+
+### Changed
+
+- Everything you read says **learnings, always follow and skills**. Files on
+  disk are unchanged.
+- The old brain tools that went through `/api/v1/mcp` are gone; the workspace
+  connector replaces them.
+
+### Fixed
+
+- The setup prompt runs as Trail even when it's started as `graft`, which an
+  agent does when installing `@trailhq/trail-code` fails. It used to skip
+  everything Trail does. If the `trail` command is missing, setup says how to
+  install it.
+- A repo skill's description reaches the onboarding review, so it no longer
+  shows "No description yet" on Trail.
+- A setup that stops never leaves Trail's page waiting. Run from the home
+  folder, in a folder that isn't a git repo, with an agent list it doesn't
+  know, or stopped part way, `trail init --pair` tells the page why and how to
+  fix it. It no longer sets up a folder that isn't a git repo.
+- A setup that can't reach Trail stops before changing anything and says to
+  run it again with network access. Codex runs commands with the network off
+  unless asked.
+- A laptop whose person connects late (a join approved after an hour, the
+  page reopened, the laptop restarted) is connected by the next `trail`
+  command, which says so once.
+- A broken pairing file no longer crashes `trail mcp`; the repo is treated as
+  not paired.
+- `TRAIL_MCP_URL` is only used for the paired Trail or a local server, so the
+  laptop's token is never sent anywhere else.
+
 ## 0.25.0
 
 ### Added
