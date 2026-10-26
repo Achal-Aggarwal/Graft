@@ -43,12 +43,15 @@ export function serverUrl(url: string | undefined): string | null {
   }
 }
 
+/** Whether `url` is on this machine (localhost, 127.0.0.1, [::1], *.localhost) or a `.test` host nothing on the internet answers. */
+export function isLocalServer(url: string): boolean {
+  const host = new URL(url).hostname.toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost") || host.endsWith(".test");
+}
+
 function testServer(env: NodeJS.ProcessEnv): string | null {
   const url = serverUrl(env[TEST_SERVER_ENV]);
-  if (!url) return null;
-  const host = new URL(url).hostname.toLowerCase();
-  const local = host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost") || host.endsWith(".test");
-  return local ? url : null;
+  return url && isLocalServer(url) ? url : null;
 }
 
 /** The Trail `init --connect` or `--pair` was told with `--server`, for the rest of this process. */
@@ -110,7 +113,8 @@ function cloudPath(env: NodeJS.ProcessEnv = process.env): string {
 /** The connection, or null when this machine hasn't connected a workspace. */
 export function readCloud(env: NodeJS.ProcessEnv = process.env): Cloud | null {
   const c = readJson<Cloud>(cloudPath(env));
-  return c?.token && c.workspace?.slug ? c : null;
+  // A file edited by hand, or cut short, is no connection: every caller reads the address and the token.
+  return c && typeof c.token === "string" && c.token && typeof c.url === "string" && serverUrl(c.url) && c.workspace?.slug ? c : null;
 }
 
 /**

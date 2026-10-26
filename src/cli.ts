@@ -90,6 +90,8 @@ import type { CheckResult } from "./check/types.js";
 import { checkLocally } from "./check/local-check.js";
 import { findLearning, learningFileName, liveLearnings } from "./notes/learning-fields.js";
 import { savedIdLine } from "./notes/replace.js";
+import { ALWAYS_FOLLOW, isAlwaysFollow } from "./notes/units.js";
+import { alwaysFollowBacked } from "./notes/always-follow-gate.js";
 import { formatOverlap, maybeRefreshBranches, overlapsWith, pushedWhen, readBranchCache, refreshBranches } from "./notes/branches.js";
 import { ensureRepoTrail, LEARNINGS_DIR } from "./notes/repo-trail.js";
 import type { AskResult } from "./ask/ask.js";
@@ -979,7 +981,7 @@ program
   .command("mcp", { hidden: TRAIL })
   .description("Serve the graph over MCP (stdio): exposes graft_find_code, graft_trace_calls, graft_find_all, graft_file_api, graft_repo_map and graft_check_freshness as tools")
   .argument(...DIR_ARG)
-  .option("--brains", "serve only the connected Trail workspace's brain tools (what Claude Code gets after init --connect)")
+  .option("--brains", "serve only the paired Trail workspace's tools and skills (what Claude Code gets after init --connect)")
   .action(async (dirArg: string | undefined, opts: { brains?: boolean }) => {
     const { startMcpServer } = await import("./mcp/server.js");
     if (opts.brains) {
@@ -1150,6 +1152,7 @@ grouped(program.command("note", { hidden: !TRAIL }), GROUP.memory)
   .requiredOption("--title <text>", "what the session was about, in a few words")
   .option("-m, --body <text>", "the learning itself, instead of stdin")
   .option("--personal", "about your own setup or habits, not the code: keep it in ~/.trail, out of the repo")
+  .option("--always-follow", "the person says it must hold even if someone asks otherwise: Claude won't go against it (only on their word)")
   .option("--touches <list>", "comma-separated files or file#Symbol it's about (default: the files this session changed, in every repo it changed)")
   .option("--author <name>", "who wrote it (default: the first word of git config user.name)")
   .option("--minutes <n>", "what it took to work out, when the agent's transcript can't say")
@@ -1235,6 +1238,7 @@ interface NoteOptions {
   tokens?: string;
   json?: boolean;
   personal?: boolean;
+  alwaysFollow?: boolean;
   replaces?: string;
   anyway?: boolean;
 }
@@ -1322,12 +1326,16 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
   }
   const author = opts.author?.trim() || noteAuthor(repo);
   const date = new Date().toISOString().slice(0, 10);
+  const always = opts.alwaysFollow ? alwaysFollowBacked(repo, opts.title) : { ok: false as const };
   // Saved by `trail note`, which is how an agent saves: src says so, and no flag changes it.
   const earlier: Note[] = [];
   const saved: Note[] = [];
   for (const t of targets) {
     earlier.push(...listNotes(t.dir));
-    saved.push(writeNote(t.dir, { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches, replaces, src: "agent" }, scope));
+    // Always follow is a mark on the learning: written as kind guardrail (what older files and the cloud read), and
+    // standing, so every session starts with it. Only on the person's word (always-follow-gate.ts).
+    const mark = always.ok ? { kind: "guardrail" as const, standing: true } : {};
+    saved.push(writeNote(t.dir, { title: opts.title, body, author, date, branch: currentBranch(t.dir), cost, touches: t.touches, replaces, src: "agent", ...mark }, scope));
   }
   const touches = targets.flatMap((t) => t.touches);
   track(
@@ -1340,8 +1348,12 @@ async function runNoteCommand(repo: string, opts: NoteOptions): Promise<void> {
     console.log(JSON.stringify(saved.length === 1 ? saved[0] : saved, null, 2));
     return;
   }
-  for (const n of saved) console.log(`✓ ${n.scope === "personal" ? "saved just for you" : "added to this repo"} · ${notePlace(n)}`);
+  for (const n of saved) console.log(`✓ ${n.scope === "personal" ? "saved just for you" : "added to this repo"}${isAlwaysFollow(n) ? `, ${ALWAYS_FOLLOW}` : ""} · ${notePlace(n)}`);
   console.log(savedIdLine(saved));
+  if (opts.alwaysFollow && !always.ok)
+    console.log(
+      `· not marked always follow: nothing the person typed this session says it must always hold. Saved as a learning; if they want it always followed, ask them, then save it again with --replaces ${saved[0]!.id} --always-follow`,
+    );
   const note = saved[0]!;
   // Name a code file if the note touches one; docs are rarely what it's about.
   const about = touches.find((t) => !/\.(md|mdx|txt)$/i.test(t.split("#")[0]!)) ?? touches[0];
@@ -1873,7 +1885,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
   const sent = await reporter.summary({ tokens, ...(sessions ? { sessions } : {}), learnings, teammates });
   await reporter.stage("done");
   await reporter.flush();
-  // Claude Code gets the workspace's brains through one user-level `trail` entry.
+  // Claude Code gets the workspace's tools and skills through one user-level `trail` entry.
   const brainsEntry = res.ids.includes("claude") && opts.global !== false ? installBrainsServer(homedir()) : null;
   if (sent) {
     const parts = [
@@ -1887,7 +1899,7 @@ async function runConnectInit(dir: string, opts: InitOptions): Promise<void> {
     console.error(`· couldn't send the summary to Trail this time · with a new code from ${base}/welcome/code, ${connectAgain(cmd("graft init"), "<code>", base)} sends it again`);
   }
   if (brainsEntry?.action === "created" || brainsEntry?.action === "updated")
-    console.error(`✓ Claude Code gets your workspace's brains in every project · restart it to pick them up`);
+    console.error(`✓ Claude Code gets your team's learnings and skills in every project · restart it to pick them up`);
 }
 
 /** What one target's wiring did, for the compact summary to report. */

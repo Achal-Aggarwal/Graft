@@ -92,7 +92,7 @@ test("r adds a preference to the repo (committed) and back; on a skill or guardr
   assert.equal(back.r.scopes[3]!.scope, "personal");
   for (const keys of [["r", "\r"], [DOWN, "r", "\r"]]) {
     const x = await run(keys);
-    assert.match(x.out, /adding skills and guardrails to the repo comes in a later version/);
+    assert.match(x.out, /adding skills and always-follow learnings to the repo comes in a later version/);
     assert.equal(x.r.scopes[1]!.scope, "personal");
     assert.equal(x.r.scopes[2]!.scope, "personal");
   }

@@ -48,12 +48,12 @@ export const INIT_COPY: Record<string, string> = {
   alreadyKept: '· {a} already kept {where} (they apply here too)',
   nothing: "· nothing came up on two or more days, so there's nothing to keep from your past sessions yet",
   skills: 'Skills',
-  guardrails: 'Guardrails',
-  preferences: 'Preferences',
+  guardrails: 'Always follow',
+  preferences: 'Learnings',
   reviews: 'From PR reviews',
   team: "Your teammates' Claude doesn't know these yet",
   keys1: '↑↓ move · space tick · s see the steps · enter keep ticked · n keep nothing',
-  keys2: 'w every repo or this repo · r add a preference to this repo (committed) · esc decide later',
+  keys2: 'w every repo or this repo · r add a learning to this repo (committed) · esc decide later',
   skillsOff: 'skills are off · trail skills on lets init also find repeated jobs and keep their steps',
   skillCount: 'Claude worked out how to {job} from scratch on {days} different days.',
   guardCount: 'Hit {words} on {days} days.',
@@ -77,11 +77,11 @@ export const INIT_COPY: Record<string, string> = {
   afterEsc: 'kept nothing · they wait until you run trail init again',
   afterN: "kept nothing · Trail won't bring these up again",
   wNoTimeout: 'this Mac has no timeout in any repo, so it stays every repo',
-  rLater: 'adding skills and guardrails to the repo comes in a later version',
+  rLater: 'adding skills and always-follow learnings to the repo comes in a later version',
   yesAgent: 'found {found}. Kept nothing: an agent ran this. The person picks with trail keep <numbers> after seeing the list, or trail init --look-back in their own terminal',
-  yesScript: 'found {found}. Kept only the preferences (your own words). To pick the rest: trail init --look-back',
-  foldHint: 'kept with skill {n}, it goes into that skill as a lesson, since a step of it already does this',
-  folded: '· {pref} went into {skill} as a lesson, since a step of it already does that',
+  yesScript: 'found {found}. Kept only the learnings in your own words. To pick the rest: trail init --look-back',
+  foldHint: 'kept with skill {n}, it goes into that skill as a learning, since a step of it already does this',
+  folded: '· {pref} went into {skill} as a learning, since a step of it already does that',
 };
 
 /**
@@ -230,7 +230,7 @@ export function screenLines(items: InitItem[], state: { cursor: number; open: nu
 
 /** One relayed item: `{n}. {title} ({kind}) · {count} · {scope}`. */
 export function relayItemLine(item: InitItem, repoName: string): string {
-  const kind = item.kind === 'preference' ? 'preference, your own words' : item.kind === 'review' ? 'from PR reviews' : item.kind === 'claude' ? 'from what your Claude keeps' : item.kind;
+  const kind = item.kind === 'preference' ? 'learning, your own words' : item.kind === 'guardrail' ? 'always follow' : item.kind === 'review' ? 'from PR reviews' : item.kind === 'claude' ? 'from what your Claude keeps' : item.kind;
   return `${item.n}. ${quoted(item)} (${kind}) · ${countSentence(item, repoName).replace(/\.$/, '')} · ${scopeWords(item)}`;
 }
 
@@ -254,7 +254,7 @@ export function relayLines(items: InitItem[], facts: ScreenFacts): string[] {
 
 const counts = (items: Array<Pick<InitItem, 'kind'>>) => {
   const n = (k: InitKind) => items.filter((i) => i.kind === k).length;
-  return `${plural(n('skill'), 'skill')}, ${plural(n('guardrail'), 'guardrail')} and ${plural(n('preference'), 'preference')}`;
+  return `${plural(n('skill'), 'skill')}, ${plural(n('guardrail'), 'always-follow learning')} and ${plural(n('preference'), 'learning')}`;
 };
 
 /** `--yes`'s line (4.9): an agent's keeps nothing; the person's script keeps only their own words. */

@@ -24,15 +24,15 @@ test("the screen, skills on: every line of 4.7, the cursor on the first item", (
     "Skills",
     "› [ ] 1  release-npm · publish to npm and check it with npm view",
     "         Claude worked out how to publish acme-cli to npm from scratch on 21 different days. Your Claude Code how-to release.md describes it. · just for you, in this repo",
-    "Guardrails",
+    "Always follow",
     "  [ ] 2  no-timeout · this Mac has no timeout",
     "         Hit \"timeout: command not found\" on 6 days. · just for you, in every repo",
-    "Preferences",
+    "Learnings",
     "  [x] 3  \"explain it simply, one example first\"",
     "         You said this on 12 days. · just for you, in every repo",
     "",
     "↑↓ move · space tick · s see the steps · enter keep ticked · n keep nothing",
-    "w every repo or this repo · r add a preference to this repo (committed) · esc decide later",
+    "w every repo or this repo · r add a learning to this repo (committed) · esc decide later",
   ]);
   for (const l of lines) assert.doesNotMatch(l, WORDS, l);
 });
@@ -57,8 +57,8 @@ test("the agent's relay (J02): from Trail, RELAY_LINE and KEEP_LINE word for wor
     "[trail] From Trail, the tool this person installed to keep commands that worked as skills. trail init found these in the past sessions of the person you are working with. Only they decide what Trail keeps, so the list is theirs to answer.",
     RELAY_LINE,
     "1. release-npm (skill) · Claude worked out how to publish acme-cli to npm from scratch on 21 different days · just for you, in this repo",
-    "2. no-timeout (guardrail) · Hit \"timeout: command not found\" on 6 days · just for you, in every repo",
-    "3. \"explain it simply, one example first\" (preference, your own words) · You said this on 12 days · just for you, in every repo",
+    "2. no-timeout (always follow) · Hit \"timeout: command not found\" on 6 days · just for you, in every repo",
+    "3. \"explain it simply, one example first\" (learning, your own words) · You said this on 12 days · just for you, in every repo",
     "Show one in full: trail skills draft init-1 --print",
     KEEP_LINE,
     "Trail checks the numbers the person typed in this session before it keeps anything, so run trail keep only with the numbers they typed.",
@@ -75,7 +75,7 @@ test("the person's own script (no TTY, not an agent) gets the list without the a
   assert.ok(!lines.some((l) => l.startsWith("[trail]")));
   assert.ok(!lines.includes(KEEP_LINE), "trail keep needs an agent session's receipt");
   assert.equal(lines[lines.length - 1], "Pick in a terminal: trail init");
-  assert.ok(lines.includes("3. \"explain it simply, one example first\" (preference, your own words) · You said this on 12 days · just for you, in every repo"));
+  assert.ok(lines.includes("3. \"explain it simply, one example first\" (learning, your own words) · You said this on 12 days · just for you, in every repo"));
 });
 
 test("after a keep: kept, not kept, refused, offers on and off (J09), esc and n", () => {
@@ -97,8 +97,8 @@ test("after a keep: kept, not kept, refused, offers on and off (J09), esc and n"
 
 test("--yes's line: an agent's keeps nothing; the person's script keeps only their own words", () => {
   const items = threeItems();
-  assert.equal(yesLine(items, true), "found 1 skill, 1 guardrail and 1 preference. Kept nothing: an agent ran this. The person picks with trail keep <numbers> after seeing the list, or trail init --look-back in their own terminal");
-  assert.equal(yesLine([...items, items[2]!], false), "found 1 skill, 1 guardrail and 2 preferences. Kept only the preferences (your own words). To pick the rest: trail init --look-back");
+  assert.equal(yesLine(items, true), "found 1 skill, 1 always-follow learning and 1 learning. Kept nothing: an agent ran this. The person picks with trail keep <numbers> after seeing the list, or trail init --look-back in their own terminal");
+  assert.equal(yesLine([...items, items[2]!], false), "found 1 skill, 1 always-follow learning and 2 learnings. Kept only the learnings in your own words. To pick the rest: trail init --look-back");
 });
 
 test("pickFive: skill, guardrail, preference, then the seconds, a review, then by rank; at most 5; numbered by kind", () => {

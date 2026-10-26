@@ -196,7 +196,7 @@ test("the handover: the next session gets the same list once with its offset rec
     const lines = text.split("\n");
     assert.ok(lines.includes(RELAY_LINE) && lines.includes(KEEP_LINE));
     assert.ok(lines.includes("1. release-npm (skill) · Claude worked out how to publish shop to npm from scratch on 3 different days · just for you, in this repo"));
-    assert.ok(lines.some((l) => l.startsWith('3. "never use em dashes in the copy" (preference, your own words)')), "the person's line read again by its pointer");
+    assert.ok(lines.some((l) => l.startsWith('3. "never use em dashes in the copy" (learning, your own words)')), "the person's line read again by its pointer");
     for (const l of lines.filter((x) => /^\d\. /.test(x))) assert.ok(c.listText.includes(l), `the same line as the relay printed: ${l}`);
     let rec = readInitRecord(c.repoKey, c.env);
     assert.deepEqual(rec.handover, { session: "s-two", offset: statSync(s2).size });

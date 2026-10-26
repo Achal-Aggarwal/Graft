@@ -56,7 +56,7 @@ const DOCKER_ENV = 'DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCON
 /** The parts every fix line shares (b7 holds them to the words rules with the other copy constants). */
 export const WALL_COPY: Record<string, string> = {
   lead: '[trail] Trail, the tool this person installed, recognizes this error',
-  lastTime: '[trail] What fixed this here before (a lesson this person kept in Trail, worked on {date1} and {date2}): {lesson}',
+  lastTime: '[trail] What fixed this here before (a learning this person kept in Trail, worked on {date1} and {date2}): {lesson}',
 };
 
 const lead = (what: string, words: string) => `${WALL_COPY.lead}${what}: ${words}.`;

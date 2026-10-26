@@ -35,7 +35,7 @@ test("one screen: the team rows first under their own heading and ticked, then t
   assert.ok(lines.includes("  [x] 2  Retries stay at 4 because the gateway times out"));
   assert.ok(lines.includes("         From what your Claude keeps about this repo. · added to this repo"));
   assert.equal(lines.filter((l) => l === "Your teammates' Claude doesn't know these yet").length, 1, "one heading for both sources");
-  assert.ok(at("Your teammates' Claude doesn't know these yet") < at("Skills") && at("Skills") < at("Preferences"));
+  assert.ok(at("Your teammates' Claude doesn't know these yet") < at("Skills") && at("Skills") < at("Learnings"));
   assert.ok(lines.includes("  [ ] 3  release-npm · publish to npm and check it with npm view"), "nothing Claude drafted starts ticked");
   assert.ok(lines.includes("  [x] 5  \"explain it simply, one example first\""));
 });

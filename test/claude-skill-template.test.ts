@@ -35,7 +35,7 @@ const SKILL_LINES = [
   "- When Trail offers to keep a job, it gives you 2 lines to end your reply with, so the person can answer; Trail reads their answer to the last one, so keep it as it is.",
   // 1b (design 1.7): two lines; the second says "keep its lines as they are", not "word for word" (D101: no line orders a recital).
   "- When `trail init` gives you a list, show it as written and run `trail keep` only with the numbers the person typed.",
-  "- When Trail offers a lesson, keep its lines as they are; run `trail skills lesson` only after the person typed yes.",
+  "- When Trail offers a learning, keep its lines as they are; run `trail skills lesson` only after the person typed yes.",
   // Phase 2 (1.8): the one line on trail skills update.
   "- Trail may ask you to run `trail skills update <name> --offer <id>` only after the person typed yes to the change it showed.",
   "- Never write or edit a skill's steps yourself. Never run `trail skills keep`, `trail skills on` or `trail skills offers on`: those are the person's.",
