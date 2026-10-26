@@ -1,7 +1,8 @@
 /**
  * `trail init --agents auto`: the website's one setup prompt. Repo files for
- * every agent (they get committed, so a teammate on another agent is covered),
- * laptop settings only for agents installed here plus the one running init.
+ * the main agents (committed, so teammates on them are covered) and any other
+ * agent set up here; laptop settings only for agents installed here plus the
+ * one running init.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -66,8 +67,16 @@ test("the caller comes first and gets laptop settings even when detection missed
   assert.equal(s.caller, "codex");
   assert.deepEqual(s.agents, ["codex", "claude", "cursor"]);
   assert.deepEqual(s.laptop, ["agents", "claude", "cursor"]);
-  assert.deepEqual(s.repo, ["claude", ...hostIds()]);
+  assert.deepEqual(s.repo, ["claude", "cursor", "agents"]);
   assert.equal(s.agent, "codex");
+});
+
+test("the repo gets the main agents' files, plus any other agent this laptop set up", () => {
+  const home = tmpRepo("auto-home");
+  const repo = tmpRepo("auto-repo");
+  assert.deepEqual(autoSelection({ home, repo, env: {} }).repo, ["claude", "cursor", "agents"]);
+  mkdirSync(join(home, ".codeium", "windsurf"), { recursive: true });
+  assert.deepEqual(autoSelection({ home, repo, env: { GEMINI_CLI: "1" } }).repo, ["claude", "cursor", "agents", "gemini", "windsurf"]);
 });
 
 test("with no caller, the reported agent is the first one set up, else claude", () => {
@@ -85,15 +94,15 @@ test("with no caller, the reported agent is the first one set up, else claude", 
 test("the summary names the agents plainly, with no em dash", () => {
   assert.equal(
     autoSummary(["claude", "cursor", "codex"]),
-    "Set up for Claude Code, Cursor and Codex on this laptop. Repo files for every agent, so teammates are covered once you commit.",
+    "Set up for Claude Code, Cursor and Codex on this laptop. Teammates on Claude Code, Cursor, Codex or OpenCode are covered once you commit.",
   );
   assert.equal(
     autoSummary(["opencode"]),
-    "Set up for OpenCode on this laptop. Repo files for every agent, so teammates are covered once you commit.",
+    "Set up for OpenCode on this laptop. Teammates on Claude Code, Cursor, Codex or OpenCode are covered once you commit.",
   );
   assert.equal(
     autoSummary([]),
-    "No coding agent found on this laptop, so nothing outside this repo changed. Repo files for every agent, so teammates are covered once you commit.",
+    "No coding agent found on this laptop, so nothing outside this repo changed. Teammates on Claude Code, Cursor, Codex or OpenCode are covered once you commit.",
   );
   for (const s of [autoSummary(["claude", "gemini"]), autoSummary([])]) assert.ok(!s.includes("—"));
 });

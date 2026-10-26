@@ -1,6 +1,6 @@
 /**
  * `trail init --agents auto [--pair CODE]`, the website's one setup prompt, as
- * a coding agent runs it: no TTY, no questions. Every agent's repo files, the
+ * a coding agent runs it: no TTY, no questions. The main agents' repo files, the
  * laptop's settings only for agents installed here plus the caller, and the
  * agents set up here reported to Trail's page.
  */
@@ -46,23 +46,20 @@ function init(repo: string, home: string, args: string[], extra: Record<string, 
   });
 }
 
-/** Every agent's committed files, under trail's names. */
+/** The main agents' committed files, under trail's names. */
 const REPO_FILES = [
   join(".claude", "settings.json"),
   join(".trail", "hook.cjs"),
   "AGENTS.md",
-  "GEMINI.md",
   join(".cursor", "rules", "trail.mdc"),
   join(".cursor", "hooks.json"),
   join(".cursor", "mcp.json"),
-  join(".windsurf", "rules", "trail.md"),
-  join(".kiro", "steering", "trail.md"),
-  join(".github", "copilot-instructions.md"),
-  join(".adal", "skills", "trail", "SKILL.md"),
-  join(".grok", "skills", "trail", "SKILL.md"),
 ];
 
-test("auto writes every agent's repo files, and laptop settings only for the ones installed here", () => {
+/** Other agents' files: only when this laptop has that agent. */
+const OTHER_FILES = ["GEMINI.md", ".windsurf", ".kiro", join(".github", "copilot-instructions.md"), ".adal", ".grok"];
+
+test("auto writes the main agents' repo files, and laptop settings only for the ones installed here", () => {
   const home = tmpRepo("auto-cli-home");
   mkdirSync(join(home, ".claude"));
   mkdirSync(join(home, ".cursor"));
@@ -70,11 +67,12 @@ test("auto writes every agent's repo files, and laptop settings only for the one
   const r = init(repo, home, ["--agents", "auto"], { CLAUDECODE: "1" });
   assert.equal(r.status, 0, r.stderr);
   for (const f of REPO_FILES) assert.ok(existsSync(join(repo, f)), `${f} missing\n${r.stderr}`);
+  for (const f of OTHER_FILES) assert.ok(!existsSync(join(repo, f)), `${f} written for an agent nobody here uses`);
   assert.ok(existsSync(join(home, ".claude", "settings.json")), "Claude Code's laptop hooks");
   assert.ok(existsSync(join(home, ".claude", "skills", "trail", "SKILL.md")), "Claude Code's skill");
   assert.ok(!existsSync(join(home, ".codex")), "Codex isn't installed: nothing for it in the home dir");
   assert.ok(!existsSync(join(home, ".gemini")), "nor for Gemini CLI or Antigravity");
-  assert.match(r.stderr, /Set up for Claude Code and Cursor on this laptop\. Repo files for every agent, so teammates are covered once you commit\./);
+  assert.match(r.stderr, /Set up for Claude Code and Cursor on this laptop\. Teammates on Claude Code, Cursor, Codex or OpenCode are covered once you commit\./);
   assert.doesNotMatch(r.stderr, /—/);
   assert.deepEqual(wiringOpts(readStamp(repo)).laptop, ["claude", "cursor"]);
 });
@@ -123,7 +121,7 @@ test("auto --dry-run prints the plan, without other agents' laptop files, and wr
   const r = init(repo, home, ["--agents", "auto", "--dry-run"]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /would write in this repo:/);
-  assert.ok(r.stderr.includes(join(".windsurf", "rules", "trail.md")), r.stderr);
+  assert.ok(!r.stderr.includes(".windsurf"), "Windsurf isn't here: no repo file for it in the plan");
   assert.ok(r.stderr.includes(join(".cursor", "rules", "trail.mdc")), r.stderr);
   assert.ok(!r.stderr.includes(join(".claude", "skills", "trail")), "Claude Code isn't here: no ~/.claude skill in the plan");
   assert.doesNotMatch(r.stderr, /affects ALL repos/);

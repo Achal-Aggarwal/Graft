@@ -452,7 +452,7 @@ function moveHereToTrail(dir: string): void {
   const flags = [o.global ? null : "--no-global", o.mcp ? null : "--no-mcp", o.hooks ? null : "--no-hooks", o.statusline ? null : "--no-statusline"].filter(
     (f): f is string => f !== null,
   );
-  // An `--agents auto` run moves the same way: every agent's repo files, laptop settings for the ones installed.
+  // An `--agents auto` run moves the same way: the main agents' repo files, laptop settings for the ones installed.
   const agents = o.laptop ? ["auto"] : hosts;
   console.log(`· moving this repo to trail: trail init ${agents.length ? `--agents ${agents.join(" ")} ` : ""}${flags.join(" ")}`.trimEnd());
   spawnSync("trail", ["init", root, "--agents", ...agents, ...flags], { stdio: "inherit" });
@@ -1181,7 +1181,7 @@ grouped(program.command("init"), GROUP.setup)
   )
   .argument("[dir]", "target repo directory", ".")
   .option("--no-build", "skip building the graph (wire files only)")
-  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude), or auto: every agent's repo files, plus laptop settings for the agents installed here`)
+  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude), or auto: repo files for Claude Code, Cursor, Codex and OpenCode, plus files and laptop settings for the agents installed here`)
   .option("--all-agents", "write instruction files for every known agent, detected or not")
   .option("--no-agents", "Claude Code wiring only; skip other agents")
   .option("--list-agents", "list known agent ids and exit")
@@ -1504,7 +1504,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const detectedIds = plan.filter((p) => p.detected).map((p) => p.id);
     const noAgents = (opts as { agents?: unknown }).agents === false;
 
-    // auto: every agent's repo files; out-of-repo writes only for `laptop`, the agents installed here and the caller.
+    // auto: the main agents' repo files plus the laptop's; out-of-repo writes only for `laptop`, the agents installed here and the caller.
     const autoSel = auto ? autoSelection({ home, repo }) : null;
     const laptop = autoSel?.laptop;
     let ids: string[];
@@ -1553,7 +1553,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
 
     if (opts.dryRun) {
       if (autoSel)
-        console.error(`· --agents auto: repo files for every agent; laptop settings for ${autoSel.agents.length ? agentList(autoSel.agents) : "none (no agent found here)"}\n`);
+        console.error(`· --agents auto: repo files for Claude Code, Cursor, Codex and OpenCode; laptop settings for ${autoSel.agents.length ? agentList(autoSel.agents) : "none (no agent found here)"}\n`);
       console.error(formatPlan(laptopOnly(plan, laptop), ids, repo, home));
       for (const child of children)
         console.error(`\n· ${child}/ (workspace child)\n` + formatPlan(laptopOnly(planInit(join(repo, child), { home }), laptop), ids, join(repo, child), home));

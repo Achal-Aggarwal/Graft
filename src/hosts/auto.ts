@@ -2,11 +2,13 @@
  * `init --agents auto`: what the website's one setup prompt runs, by a coding
  * agent, with no one to ask.
  *
- * Two lists. The repo gets every agent's files: they are committed, so a
- * teammate who uses another agent is covered once they pull. The laptop (the
- * home dir: `~/.claude`, `~/.codex`, global MCP configs) gets settings only for
- * the agents installed on it, plus the agent running init, which may live
- * somewhere detection doesn't look.
+ * Two lists. The repo gets the main agents' files (Claude Code, Cursor, and
+ * AGENTS.md for Codex and OpenCode): they are committed, so a teammate on one
+ * of them is covered once they pull. Another agent's files go in only when
+ * this laptop sets it up, so a repo isn't filled with folders for agents
+ * nobody uses. The laptop (the home dir: `~/.claude`, `~/.codex`, global MCP
+ * configs) gets settings only for the agents installed on it, plus the agent
+ * running init, which may live somewhere detection doesn't look.
  *
  * Ids here are the agents a person uses (claude, codex, opencode, ...), the
  * ones Trail's page names. The registry's `agents` host is a file (AGENTS.md)
@@ -14,7 +16,7 @@
  */
 import { statSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { HOSTS, hostIds } from './registry.js';
+import { HOSTS } from './registry.js';
 
 export type AgentId =
   | 'claude' | 'codex' | 'cursor' | 'opencode' | 'gemini' | 'copilot'
@@ -120,15 +122,18 @@ export interface AutoSelection {
   agent: AgentId;
   /** Init hosts allowed to write outside the repo. */
   laptop: string[];
-  /** Init hosts whose repo files are written: all of them. */
+  /** Init hosts whose repo files are written: the main agents', then the laptop's. */
   repo: string[];
 }
+
+/** The init hosts every repo gets: Claude Code, Cursor, and AGENTS.md (Codex, OpenCode). */
+export const MAIN_HOSTS = ['claude', 'cursor', 'agents'];
 
 export function autoSelection(opts: { home: string; repo: string; env?: NodeJS.ProcessEnv }): AutoSelection {
   const caller = callingAgent(opts.env ?? process.env);
   const agents = [...new Set([...(caller ? [caller] : []), ...installedAgents(opts.home, opts.repo)])];
   const laptop = [...new Set(agents.map(hostFor))];
-  return { caller, agents, agent: agents[0] ?? 'claude', laptop, repo: ['claude', ...hostIds()] };
+  return { caller, agents, agent: agents[0] ?? 'claude', laptop, repo: [...new Set([...MAIN_HOSTS, ...laptop])] };
 }
 
 /** The agents by name, as "Claude Code, Cursor and Codex". */
@@ -143,7 +148,7 @@ function listed(names: string[]): string {
 
 /** The line init ends its wiring with, in plain words. */
 export function autoSummary(agents: AgentId[]): string {
-  const repo = 'Repo files for every agent, so teammates are covered once you commit.';
+  const repo = 'Teammates on Claude Code, Cursor, Codex or OpenCode are covered once you commit.';
   if (agents.length === 0) return `No coding agent found on this laptop, so nothing outside this repo changed. ${repo}`;
   return `Set up for ${agentList(agents)} on this laptop. ${repo}`;
 }
