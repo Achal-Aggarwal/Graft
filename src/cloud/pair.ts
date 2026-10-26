@@ -19,7 +19,7 @@ import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
 import type { FoundSkill } from "../init/run.js";
 import { skillName } from "../skills/skills.js";
-import { newState } from "./nudge.js";
+import { newState, pairSettled, PAIR_WAIT_MS, rememberPair } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
 import { machinePayload, otherRepos, setUpPicked, type OtherRepo } from "./other-repos.js";
@@ -243,6 +243,7 @@ export class PairRun {
       windowsHide: true,
     });
     child.unref();
+    rememberPair(this.state, repo, this.base, undefined, Date.now(), child.pid);
   }
 
   private send(body: Record<string, unknown>): void {
@@ -261,10 +262,9 @@ export interface FinishOptions {
   otherRepos?: (exceptKey: string) => OtherRepo[];
   /** Sets up a picked repo's agents and map; `trail init --yes` by default. */
   initRepo?: (checkout: string) => Promise<boolean>;
+  /** A later command's wait, after the first one ran out: the command after it says the machine connected. */
+  resumed?: boolean;
 }
-
-/** Wait an hour at most for someone to sign up, connect and review. */
-const FINISH_WAIT_MS = 60 * 60 * 1000;
 /** Once the review is in, how much longer to wait for a pick of the other repos. */
 const PICK_AFTER_REVIEW_MS = 10 * 60 * 1000;
 
@@ -274,10 +274,25 @@ const PICK_AFTER_REVIEW_MS = 10 * 60 * 1000;
  * Returns what happened, for tests.
  */
 export async function finishPair(state: string, repo: string, opts: FinishOptions = {}): Promise<"uploaded" | "expired" | "timed_out" | "failed"> {
+  const { outcome, learnings } = await waitAndUpload(state, repo, opts);
+  const now = (opts.now ?? Date.now)();
+  if (outcome === "timed_out") pairSettled(state, "timed_out", undefined, undefined, now);
+  else if (outcome !== "uploaded" || !opts.resumed) pairSettled(state, "over", undefined, undefined, now);
+  else {
+    // Nobody was watching this one connect: the next command says so.
+    const cloud = readCloud();
+    pairSettled(state, "linked", cloud ? { workspace: cloud.workspace.name, url: cloud.workspace.url, repos: cloud.repos.length, learnings } : undefined, undefined, now);
+  }
+  return outcome;
+}
+
+type Waited = { outcome: "uploaded" | "expired" | "timed_out" | "failed"; learnings: number };
+
+async function waitAndUpload(state: string, repo: string, opts: FinishOptions): Promise<Waited> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const started = now();
-  const late = () => now() - started >= (opts.waitMs ?? FINISH_WAIT_MS);
+  const late = () => now() - started >= (opts.waitMs ?? PAIR_WAIT_MS);
   const base = trailUrl();
 
   let cloud: Cloud | null = null;
@@ -290,8 +305,8 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
       writeCloud(cloud);
       break;
     }
-    if ("error" in got) return "expired";
-    if (late()) return "timed_out";
+    if ("error" in got) return { outcome: "expired", learnings: 0 };
+    if (late()) return { outcome: "timed_out", learnings: 0 };
     await sleep(1500);
   }
 
@@ -313,8 +328,8 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
       reviewedAt = now();
       break;
     }
-    if (r === "gone") return "expired";
-    if (late()) return "timed_out";
+    if (r === "gone") return { outcome: "expired", learnings: 0 };
+    if (late()) return { outcome: "timed_out", learnings: 0 };
     await sleep(2000);
   }
 
@@ -330,5 +345,5 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
     const after = await fetchMe(cloud, opts.fetchImpl);
     if (!isError(after)) writeCloud({ ...(readCloud() ?? cloud), repos: after.repos.map((r) => r.key) });
   }
-  return res && isError(res) ? "failed" : "uploaded";
+  return res && isError(res) ? { outcome: "failed", learnings: 0 } : { outcome: "uploaded", learnings: res?.learnings ?? 0 };
 }

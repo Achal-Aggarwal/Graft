@@ -71,7 +71,7 @@ import { listSkills } from "./skills/skills.js";
 import { registerSkillCommands } from "./skills/cli-skills.js";
 import { gateNote, namesRepoSymbol, symbolCandidates, trackedFiles } from "./notes/note-gate.js";
 import { recordLookup } from "./cloud/lookup-activity.js";
-import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
+import { clearPending, cloudLines, loginLink, sessionKey, WAIT_MS, waitForConnect } from "./cloud/nudge.js";
 import { addRepo, clearCloud, cloudEnabled, failPair, fetchMe, fetchTeam, isError, readCloud, serverUrl, trailUrl, useServer, writeCloud, type Cloud, type SetupFailure } from "./cloud/workspace.js";
 import {
   claimConnectCode,
@@ -372,10 +372,11 @@ program
   .argument("<state>")
   .argument("<dir>")
   .argument("[server]", "the Trail the run reported to (init's --server)")
-  .action(async (state: string, dir: string, server?: string) => {
+  .option("--resumed", "a later command's wait, after the first one ran out")
+  .action(async (state: string, dir: string, server: string | undefined, o: { resumed?: boolean }) => {
     const base = serverUrl(server);
     if (base) useServer(base);
-    await finishPair(state, resolve(dir));
+    await finishPair(state, resolve(dir), o.resumed ? { resumed: true, waitMs: WAIT_MS } : {});
   });
 
 program

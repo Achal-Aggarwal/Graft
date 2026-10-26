@@ -72,6 +72,22 @@ interface NudgeState {
   linked?: { workspace: string; url: string; repos: number; learnings: number };
   /** Repos already asked about adding to the workspace, by key. */
   asked?: Record<string, number>;
+  /** A paired setup's connect not yet made: `_trail-pair` waits on it until `waitUntil`, then the next command waits again. */
+  pair?: PendingPair;
+}
+
+interface PendingPair {
+  /** The state init registered, which claims the connection. */
+  state: string;
+  /** The checkout init ran in. */
+  repo: string;
+  /** The Trail it reported to. */
+  server: string;
+  createdAt: number;
+  /** Until when a wait already runs. */
+  waitUntil: number;
+  /** That wait's process: one that died early (the laptop restarted) is waited for again at once. */
+  pid?: number;
 }
 
 function statePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -146,6 +162,7 @@ export function cloudLines(repo: string, opts: NudgeOptions): string[] {
     const env = opts.env ?? process.env;
     const now = opts.now ?? Date.now();
     const agent = opts.agent ?? !process.stdout.isTTY;
+    resumePair(env, now);
     const st = readState(env);
     const cloud = readCloud(env);
     if (!cloud && env.TRAIL_CLOUD !== "1") return [];
@@ -222,6 +239,73 @@ function addRepoLines(repo: string, workspace: string, repos: string[], st: Nudg
 
 /* -------------------------------------------------------------------------- */
 /* waiting for the person to finish in the browser                            */
+/* -------------------------------------------------------------------------- */
+/* a paired setup's late connect                                              */
+/* -------------------------------------------------------------------------- */
+
+/** How long the first `_trail-pair` waits for someone to sign up, connect and review. */
+export const PAIR_WAIT_MS = 60 * 60 * 1000;
+
+/** Remember a paired setup's connect while `_trail-pair` waits on it, so a later command can wait again. */
+export function rememberPair(state: string, repo: string, server: string, env?: NodeJS.ProcessEnv, now = Date.now(), pid?: number): void {
+  writeState({ pair: { state, repo, server, createdAt: now, waitUntil: now + PAIR_WAIT_MS, pid } }, env);
+}
+
+/** The paired setup still waiting to be connected, if any. */
+export function pendingPair(env?: NodeJS.ProcessEnv): PendingPair | null {
+  return readState(env).pair ?? null;
+}
+
+/**
+ * How a wait for the connect ended: connected (`linked` says so on the next
+ * command), given up for now (`timed_out`: the next command waits again), or
+ * over (anything else). Only for the pair it names.
+ */
+export function pairSettled(state: string, outcome: "linked" | "timed_out" | "over", linked?: NonNullable<NudgeState["linked"]>, env?: NodeJS.ProcessEnv, now = Date.now()): void {
+  const p = readState(env).pair;
+  if (!p || p.state !== state) return;
+  if (outcome === "timed_out") writeState({ pair: { ...p, waitUntil: now } }, env);
+  else writeState({ pair: undefined, ...(linked ? { linked } : {}) }, env);
+}
+
+/**
+ * On a trail command: a paired setup nobody connected in the hour its wait
+ * ran gets waited on again, while Trail still takes its link. A machine
+ * connected since has nothing left to wait for.
+ */
+export function resumePair(env: NodeJS.ProcessEnv = process.env, now = Date.now(), start: (args: string[]) => number | undefined = startPairWait): void {
+  try {
+    const p = readState(env).pair;
+    if (!p) return;
+    if (now - p.createdAt >= LINK_TTL_MS || readCloud(env)) {
+      writeState({ pair: undefined }, env);
+      return;
+    }
+    if (now < p.waitUntil && (p.pid === undefined || alive(p.pid))) return;
+    writeState({ pair: { ...p, waitUntil: now + WAIT_MS, pid: undefined } }, env);
+    const pid = start([p.state, p.repo, p.server]);
+    if (pid !== undefined) writeState({ pair: { ...p, waitUntil: now + WAIT_MS, pid } }, env);
+  } catch {
+    /* a command never fails over this */
+  }
+}
+
+function startPairWait(args: string[]): number | undefined {
+  const child = spawn(process.execPath, [graftCliPath(), "_trail-pair", ...args, "--resumed"], { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
+  return child.pid;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it's there, owned by someone else.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 
 /** Start the background wait, unless one is already running. */
