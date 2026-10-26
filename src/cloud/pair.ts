@@ -23,7 +23,7 @@ import { newState } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
 import { machinePayload, otherRepos, setUpPicked, type OtherRepo } from "./other-repos.js";
-import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, sendMachineRepos, trailUrl, writeCloud, type Cloud } from "./workspace.js";
+import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, sendMachineRepos, trailUrl, writeCloud, type Cloud, type SetupFailure } from "./workspace.js";
 
 /** A pair code as the onboarding page prints it: letters and digits. */
 export function validPairCode(code: string): boolean {
@@ -220,6 +220,12 @@ export class PairRun {
       this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m, machine)] } : {}) });
     }
     this.send({ done: true });
+    return this.flush();
+  }
+
+  /** Say the run stopped and why, after every report so far: the page shows it instead of waiting. */
+  fail(reason: SetupFailure): Promise<void> {
+    this.send({ failed: reason });
     return this.flush();
   }
 

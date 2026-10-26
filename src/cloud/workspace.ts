@@ -234,6 +234,17 @@ export async function postHandoffProgress(base: string, body: { state: string } 
   return "error";
 }
 
+/** Why a setup stopped, as Trail's page explains it. */
+export type SetupFailure = "home_folder" | "not_git" | "bad_agents" | "crashed";
+
+/**
+ * Tell the page waiting on pair code `code` why init stopped before it
+ * registered a run. Best effort: init is stopping either way.
+ */
+export async function failPair(base: string, code: string, reason: SetupFailure, fetchImpl?: Fetch): Promise<void> {
+  await call(base, "POST", "/api/cli/pairs/fail", { pair: code.trim().toUpperCase(), reason }, { fetchImpl, timeoutMs: 5_000 });
+}
+
 export type ClaimResult =
   | { cloud: Omit<Cloud, "url" | "linkedAt"> }
   | { pending: true }

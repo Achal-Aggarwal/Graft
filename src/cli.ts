@@ -34,7 +34,7 @@ import { contextDirFor } from "./context/node-file.js";
 import { loadGraphCached } from "./graph/load.js";
 import { ensureFreshChildren, ensureFreshGraph, refreshNote } from "./graph/refresh.js";
 import { isWorkspaceBuildRoot, readWorkspace } from "./graph/workspace.js";
-import { NOT_GIT_LINE, homeFolderRefusal, isGitWorkTree } from "./init-guard.js";
+import { NOT_GIT_LINE, NOT_GIT_PAIR_REFUSAL, homeFolderRefusal, isGitWorkTree } from "./init-guard.js";
 import { hasGraftIndex, nearestGraftRoot } from "./graph/root.js";
 import { unsupportedExtensions, supportedExtensions } from "./graph/source-files.js";
 import { discoverWorkspaceChildren } from "./graph/scopes.js";
@@ -72,7 +72,7 @@ import { registerSkillCommands } from "./skills/cli-skills.js";
 import { gateNote, namesRepoSymbol, symbolCandidates, trackedFiles } from "./notes/note-gate.js";
 import { recordLookup } from "./cloud/lookup-activity.js";
 import { clearPending, cloudLines, loginLink, sessionKey, waitForConnect } from "./cloud/nudge.js";
-import { addRepo, clearCloud, cloudEnabled, fetchMe, fetchTeam, isError, readCloud, serverUrl, trailUrl, useServer, writeCloud, type Cloud } from "./cloud/workspace.js";
+import { addRepo, clearCloud, cloudEnabled, failPair, fetchMe, fetchTeam, isError, readCloud, serverUrl, trailUrl, useServer, writeCloud, type Cloud, type SetupFailure } from "./cloud/workspace.js";
 import {
   claimConnectCode,
   connectAgain,
@@ -1461,8 +1461,20 @@ function shown(repo: string, path: string): string {
 /** Agents init knows by another id: both read AGENTS.md. */
 const AGENT_ALIASES: Record<string, string> = { codex: "agents", opencode: "agents" };
 
+/**
+ * The `init --pair` run Trail's page is following, while it runs: a crash then
+ * tells the page the run stopped (see the end of this file).
+ */
+let livePair: PairRun | null = null;
+
 /** `graft init`. */
 async function runInitCommand(dir: string, opts: InitOptions, progress?: InitProgress): Promise<{ ids: string[]; laptop: string[] } | null> {
+    // With --pair, Trail's page is waiting on this run: one that stops before
+    // telling Trail about itself says why there, so the page doesn't wait on.
+    const stopPaired = async (reason: SetupFailure) => {
+      if (opts.pair === undefined || !validPairCode(opts.pair) || !useServerOption(opts.server)) return;
+      await failPair(trailUrl(), opts.pair, reason);
+    };
     if (opts.listAgents) {
       for (const id of [...hostIds(), "claude"]) console.log(id);
       return null;
@@ -1475,6 +1487,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const auto = asked?.includes("auto") === true;
     if (auto && asked!.length > 1) {
       console.error("✗ --agents auto picks the agents itself: give it on its own, or name the agents instead");
+      await stopPaired("bad_agents");
       process.exit(1);
     }
     const explicit = asked && !auto ? [...new Set(asked.map((id) => AGENT_ALIASES[id] ?? id))] : undefined;
@@ -1484,6 +1497,15 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const refusal = homeFolderRefusal(repo);
     if (refusal) {
       console.error(refusal);
+      await stopPaired("home_folder");
+      process.exitCode = 1;
+      return null;
+    }
+    // Trail's page shares a repo with the team: a folder that isn't one (or holds
+    // several) would be set up with nothing to share.
+    if (opts.pair !== undefined && !isGitWorkTree(repo)) {
+      console.error(NOT_GIT_PAIR_REFUSAL);
+      await stopPaired("not_git");
       process.exitCode = 1;
       return null;
     }
@@ -1493,6 +1515,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const unknown = explicit.filter((id) => !validIds.includes(id));
       if (unknown.length) {
         console.error(`✗ unknown agent id(s): ${unknown.join(", ")}; valid: ${validIds.join(", ")}`);
+        await stopPaired("bad_agents");
         process.exit(1);
       }
     }
@@ -1581,6 +1604,12 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         console.error(`⚠ couldn't tell Trail about this run (${started.error}); setting up here anyway`);
       } else {
         pair = started;
+        livePair = started;
+        // An agent whose tool call runs out of time ends init with SIGTERM: say the run stopped, briefly, then go.
+        process.once("SIGTERM", () => {
+          const said = livePair ? livePair.fail("crashed") : Promise.resolve();
+          void Promise.race([said, new Promise((ok) => setTimeout(ok, 3_000))]).finally(() => process.exit(143));
+        });
         console.error(`· Trail's page is following along · ${started.url}`);
       }
       // Started as graft or by an old shim (asksForTrail): the repo is set up for trail, whose commands its agents get told to run.
@@ -1814,6 +1843,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       pair.teamDone(teammates);
       pair.findings({ tokens, sessions: lookBack?.reads.lb ? sessionsRead : undefined, teammates, ...(autoSel ? { agents: autoSel.agents } : {}) });
       await pair.finish(repo, skillsFound);
+      livePair = null;
       pair.handOff(repo);
       console.error(`✓ Trail has what it found · review it in the browser: ${pair.url}`);
       if (!process.stdout.isTTY) console.error(`[trail] Tell the user, in one line: their Trail page has moved on; review what Trail found there. If it isn't open, the link is ${pair.url}`);
@@ -2630,7 +2660,9 @@ if (TRAIL) {
   program.addHelpText("after", "\ntrail <command> --help for flags · every graft command still works");
 }
 
-program.parseAsync(process.argv).catch((err) => {
+program.parseAsync(process.argv).catch(async (err) => {
   console.error(err instanceof Error ? err.message : err);
+  // An `init --pair` that crashed part way: its page shows that it stopped instead of reading on.
+  await livePair?.fail("crashed");
   process.exit(1);
 });
