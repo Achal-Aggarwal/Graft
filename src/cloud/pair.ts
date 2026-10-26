@@ -98,8 +98,9 @@ const FOUND_PER_CALL = 200;
 const MAX_FOUND = 500;
 
 /**
- * One init run, reported to the onboarding page. Every call is best effort:
- * a slow or unreachable Trail never holds up or fails init.
+ * One init run, reported to the onboarding page. Every call after start is
+ * best effort: a slow or unreachable Trail never holds up or fails init. A
+ * Trail that can't be reached at start does stop init (see runInitCommand).
  */
 export class PairRun {
   readonly state: string;
@@ -126,10 +127,10 @@ export class PairRun {
   }
 
   /**
-   * Tell Trail about this run, with the pair code, and return it; null when
-   * Trail can't be reached or turns the code down (init carries on without it).
+   * Tell Trail about this run, with the pair code, and return it; an error
+   * when Trail turns it down (with its status) or can't be reached (none).
    */
-  static async start(repo: string, code: string, opts: { agent: string; version: string; fetchImpl?: typeof fetch }): Promise<PairRun | { error: string }> {
+  static async start(repo: string, code: string, opts: { agent: string; version: string; fetchImpl?: typeof fetch }): Promise<PairRun | { error: string; status?: number }> {
     const base = trailUrl();
     const state = newState();
     const place = repoPlace(repo);
@@ -143,7 +144,7 @@ export class PairRun {
       { state, repo: current, repos: known, author: noteAuthor(repo), pair: code.trim().toUpperCase() },
       opts.fetchImpl,
     );
-    if (isError(reg)) return { error: reg.error };
+    if (isError(reg)) return { error: reg.error, status: reg.status };
     const run = new PairRun(base, state, reg.url, opts.version, opts.fetchImpl);
     run.send({ agent: opts.agent, phases: run.phases, log: [`Installed Trail-code ${opts.version}`] });
     return run;

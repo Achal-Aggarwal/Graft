@@ -1600,6 +1600,19 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         return null;
       }
       const started = await PairRun.start(repo, opts.pair, { agent: autoSel ? autoSel.agent : asked?.[0] ?? ids[0]!, version: currentVersion });
+      if ("error" in started && started.status === undefined) {
+        // No answer at all: most often an agent that runs commands with the
+        // network off (Codex does unless asked). Setting up here would leave
+        // Trail's page waiting on a run it never hears of, so stop and say how.
+        const what = started.error.startsWith("Trail ") ? `Trail at ${trailUrl()}${started.error.slice("Trail".length)}` : `couldn't reach Trail at ${trailUrl()}`;
+        console.error(
+          `✗ ${what}, so Trail's page can't follow this setup.\n` +
+            "  If you run commands without network access (a sandbox), run this same command again with network access.\n" +
+            "  Otherwise check the VPN or proxy, then run it again.",
+        );
+        process.exitCode = 1;
+        return null;
+      }
       if ("error" in started) {
         console.error(`⚠ couldn't tell Trail about this run (${started.error}); setting up here anyway`);
       } else {

@@ -142,3 +142,16 @@ test("killed part way (an agent's tool timeout): the run says it stopped before 
     trail.close();
   }
 });
+
+// Codex runs commands with the network off unless asked. Setting up here anyway left Trail's page waiting on a run it never heard of.
+test("Trail can't be reached: --pair stops before writing anything and tells the agent to run it again with network access", async () => {
+  const home = tmpRepo("pair-stop-offline-home");
+  mkdirSync(join(home, ".claude"));
+  const repo = tmpRepo("pair-stop-offline");
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  const r = await init(repo, home, "http://127.0.0.1:9", ["--agents", "auto"]);
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /couldn't reach Trail at http:\/\/127\.0\.0\.1:9/);
+  assert.match(r.err, /run this same command again with network access/);
+  assert.deepEqual(spawnSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).stdout, "", "nothing written");
+});
