@@ -93,7 +93,8 @@ test("one wait from boot: with a workspace that never answers, initialize and to
     const list = await s.wait((m) => m.id === 2);
     assert.ok(list.msg.result.tools.some((t: any) => t.name === "trail_find_code"));
     assert.ok(list.at - init.at < 1000, `tools/list waited ${list.at - init.at} ms after initialize`);
-    assert.ok(list.at - s.started < 7000, `${list.at - s.started} ms from start`);
+    // From start includes booting node with tsx, which Windows CI takes 7 to 9 s over on its own.
+    assert.ok(list.at - s.started < (process.platform === "win32" ? 15000 : 7000), `${list.at - s.started} ms from start`);
   } finally {
     await s.close();
   }
