@@ -26,7 +26,7 @@ import { codexStatusLines, codexTrustLine } from "./hosts/codex-trust.js";
 import { hostIds } from "./hosts/registry.js";
 import { agentList, autoSelection, autoSummary } from "./hosts/auto.js";
 import { checkoutRoot, ensureRepoHome, keepsNotes, noteCount, rememberRepo, repoName, repoPlace, shownPath } from "./notes/home.js";
-import { brand, cmd, graftNotice, strandedRepoNotice, tag } from "./brand.js";
+import { asksForTrail, brand, cmd, graftNotice, PACKAGE_FOR, setBrand, strandedRepoNotice, tag, trailOnPath } from "./brand.js";
 import { branchDiff } from "./cloud/diff.js";
 import { openBrowser } from "./util/browser.js";
 import { committedAtBase, learningsAtBase, teammateEdits, withBaseLearnings } from "./check/learning-edits.js";
@@ -125,8 +125,10 @@ const currentVersion = readCurrentVersion(import.meta.url);
  * registered, because it changes which commands exist: under trail the old
  * `graft trail …` group moves to the top level, `check` hands its name to the
  * team check (the freshness check is `build --check`), and `stats` and
- * `trail status` become one `status`. Under graft nothing moves.
+ * `trail status` become one `status`. Under graft nothing moves. Trail's setup
+ * prompt runs as trail whichever name started it (`asksForTrail`).
  */
+if (asksForTrail(process.argv.slice(2))) setBrand("trail");
 const TRAIL = brand() === "trail";
 
 /** Help-screen groups under trail; graft keeps its one flat list. */
@@ -1581,6 +1583,8 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
         pair = started;
         console.error(`· Trail's page is following along · ${started.url}`);
       }
+      // Started as graft or by an old shim (asksForTrail): the repo is set up for trail, whose commands its agents get told to run.
+      if (!trailOnPath()) console.error(`⚠ the trail command isn't installed here · npm install -g ${PACKAGE_FOR.trail} so your agents can run it`);
     }
 
     const wantClaude = ids.includes("claude");
@@ -1607,13 +1611,13 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     // up at the end. Nothing is kept without a tick (see src/init/review.ts).
     const tty = Boolean(process.stdin.isTTY && process.stderr.isTTY);
     // Past Claude sessions are on this laptop only where Claude Code is.
-    const lookBack = TRAIL && wantClaude && (!laptop || laptop.includes("claude")) ? beginLookBack(repo, { plain: opts.plain === true, again: opts.lookBack === true }) : null;
+    const lookBack = TRAIL && wantClaude && (!laptop || laptop.includes("claude")) ? beginLookBack(repo, { plain: opts.plain === true, again: opts.lookBack === true, pair: pair !== null }) : null;
     for (const line of lookBack?.lines ?? []) console.error(line);
     if (pair) {
       if (lookBack?.reads.lb) pair.phase("decisions", "running", "", "Reading past Claude sessions");
-      else pair.phase("decisions", "done", "none here");
+      else pair.phase("decisions", "done", "skipped");
       if (lookBack?.reads.reviews) pair.phase("prs", "running", "", "Reading review comments on merged PRs");
-      else pair.phase("prs", "done", "none here");
+      else pair.phase("prs", "done", "skipped");
     }
 
     if (children.length)

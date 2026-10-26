@@ -343,12 +343,14 @@ export function verifyReviews(raw: RawReviewFinding[], prs: ReviewedPR[]): Revie
  */
 export async function findReviewLearnings(
   repo: string,
-  opts: { model?: string; timeoutMs?: number; gh?: string; limit?: number } = {},
+  opts: { model?: string; timeoutMs?: number; gh?: string; limit?: number; capMs?: number } = {},
 ): Promise<ReviewResult> {
   const model = opts.model ?? COLD_START_MODEL;
   const started = Date.now();
+  // `capMs`: the whole read, gh and the model call, ends by then (an agent's tool call has a time limit).
+  const left = () => (opts.capMs === undefined ? Infinity : opts.capMs - (Date.now() - started));
   const base = { prs: 0, reviewed: 0, read: 0, model, findings: [] as ReviewFinding[] };
-  const data = await fetchMergedPRs(repo, opts.gh ?? "gh", 60_000);
+  const data = await fetchMergedPRs(repo, opts.gh ?? "gh", Math.min(60_000, left()));
   if (!data) return { ...base, durationMs: Date.now() - started, reason: "no_gh" };
   const { merged, prs } = reviewedPRs(data);
   base.prs = merged;
@@ -362,7 +364,7 @@ export async function findReviewLearnings(
     bin,
     `Inline review comments on this repository's recently merged PRs that the author acted on, newest first, each after the code it was left on. Find the rules about this codebase a newcomer would get wrong.\n\n${text}`,
     model,
-    opts.timeoutMs ?? 180_000,
+    Math.max(1, Math.min(opts.timeoutMs ?? 180_000, left())),
     { system: SYSTEM, schema: SCHEMA },
   );
   const durationMs = Date.now() - started;
@@ -392,7 +394,7 @@ export interface ReviewRead {
  * committed what it found, TRAIL_NO_FETCH is set, or there's no `gh` to read
  * them with.
  */
-export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.env, gh = "gh"): ReviewRead | null {
+export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.env, gh = "gh", capMs?: number): ReviewRead | null {
   try {
     if (env.TRAIL_NO_FETCH === "1" || readJson<{ at?: number }>(readMark(repo))?.at) return null;
     // The same reviews give a teammate the same findings: once is enough for the repo.
@@ -401,7 +403,7 @@ export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.e
       track("cold_start", { source: "reviews", outcome: "no_gh" }, { repo });
       return null;
     }
-    const read: ReviewRead = { started: Date.now(), done: false, result: findReviewLearnings(repo, { gh }) };
+    const read: ReviewRead = { started: Date.now(), done: false, result: findReviewLearnings(repo, { gh, ...(capMs === undefined ? {} : { capMs }) }) };
     void read.result.then(() => (read.done = true));
     return read;
   } catch {

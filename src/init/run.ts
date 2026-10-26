@@ -76,7 +76,7 @@ const AGENT_CAP_MS = 100_000;
 const PERSON_CAP_MS = 300_000;
 
 /** Start the look-back and the PR-review read; the lines to print now, before anything finishes. */
-export function beginLookBack(repo: string, opts: { env?: NodeJS.ProcessEnv; plain?: boolean; again?: boolean; deps?: PersonDeps } = {}):
+export function beginLookBack(repo: string, opts: { env?: NodeJS.ProcessEnv; plain?: boolean; again?: boolean; pair?: boolean; deps?: PersonDeps } = {}):
   { reads: LookBackReads; lines: string[] } {
   const env = opts.env ?? process.env;
   const person = personAtTerminal(env, opts.deps ?? {});
@@ -89,8 +89,10 @@ export function beginLookBack(repo: string, opts: { env?: NodeJS.ProcessEnv; pla
   if (lookBackOff(env) || !(opts.again || lookBackDue(repo, env))) return { reads, lines: [] };
   reads.lb = lookBackOffThread(repo, { env, capMs: agent ? AGENT_CAP_MS : PERSON_CAP_MS, skills });
   const lines = ['· looking back at your past Claude Code sessions here (about a minute)'];
-  // The PR-review read is phase 0's second call: only where the naming call may run (0 rule 4).
-  reads.reviews = model ? beginReviewRead(repo, env) : null;
+  // The PR-review read is phase 0's second call: only where the naming call may run (0 rule 4), or where the person
+  // asked for Trail on its page (`--pair`), whoever runs init. An agent's read ends inside its tool call's limit.
+  const reviews = model || (opts.pair === true && !plain);
+  reads.reviews = reviews ? beginReviewRead(repo, env, 'gh', agent ? AGENT_CAP_MS : undefined) : null;
   if (reads.reviews) lines.push("· reading review comments on this repo's merged PRs for what reviewers keep flagging");
   return { reads, lines };
 }
