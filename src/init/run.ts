@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { anchoredReviews, finishReviewRead, beginReviewRead, type ReviewFinding, type ReviewRead, type ReviewResult } from '../notes/pr-reviews.js';
 import { beginSessionRead, finishSessionRead, offeredSessions, type SessionRead, type SessionResult } from '../learn/sessions.js';
 import { learningBody } from '../learn/bar.js';
+import { LiveFeed, liveLine } from './live.js';
 import { flatLine } from '../notes/flatten.js';
 import type { Learning } from '../learn/bar.js';
 import { finishMemoryRead, memoryCandidates, offeredBefore, type MemoryCandidate } from '../notes/memory-notes.js';
@@ -75,6 +76,8 @@ export interface LookBackReads {
   skills: boolean;
   env: NodeJS.ProcessEnv;
   started: number;
+  /** Each learning the reads check, the moment it lands: init's terminal and Trail's page show them then. */
+  live: LiveFeed;
 }
 
 /** Agent runs stop reading at 100 s so the tool call ends inside Claude Code's 120 s; the person's at 300 s (3.6). */
@@ -91,17 +94,26 @@ export function beginLookBack(repo: string, opts: { env?: NodeJS.ProcessEnv; pla
   const model = !agent && mayCallClaude(env, { plain }, opts.deps ?? {}, person);
   const skills = readSettings(env).skills === 'on';
   const memory = memoryRows(repo, env.HOME);
-  const reads: LookBackReads = { lb: null, reviews: null, sessions: null, memory, person, agent, model, plain, skills, env, started: Date.now() };
+  const live = new LiveFeed();
+  const reads: LookBackReads = { lb: null, reviews: null, sessions: null, memory, person, agent, model, plain, skills, env, started: Date.now(), live };
   if (lookBackOff(env) || !(opts.again || lookBackDue(repo, env))) return { reads, lines: [] };
   reads.lb = lookBackOffThread(repo, { env, capMs: agent ? AGENT_CAP_MS : PERSON_CAP_MS, skills });
   const lines = ['· looking back at your past Claude Code sessions here (about a minute)'];
   // The PR-review read is phase 0's second call: only where the naming call may run (0 rule 4), or where the person
   // asked for Trail on its page (`--pair`), whoever runs init. An agent's read ends inside its tool call's limit.
   const reviews = model || (opts.pair === true && !plain);
-  reads.reviews = reviews ? beginReviewRead(repo, env, 'gh', agent ? AGENT_CAP_MS : undefined) : null;
+  reads.reviews = reviews
+    ? beginReviewRead(repo, env, 'gh', agent ? AGENT_CAP_MS : undefined, (f) => live.push({ title: f.title, body: f.body, from: 'prs' }))
+    : null;
   if (reads.reviews) lines.push("· reading this repo's pull requests for what the team decided and ruled out");
   // The same rule starts the session read: it goes to the person's own Claude Code, on this machine.
-  reads.sessions = reviews ? beginSessionRead(repo, env, { ...(agent ? { capMs: AGENT_CAP_MS } : {}), again: opts.again === true }) : null;
+  reads.sessions = reviews
+    ? beginSessionRead(repo, env, {
+      ...(agent ? { capMs: AGENT_CAP_MS } : {}),
+      again: opts.again === true,
+      onLearning: (l) => live.push({ title: l.headline, body: learningBody(l, '').trim(), from: 'sessions' }),
+    })
+    : null;
   // One line for both reads of the sessions: the look-back's and what was decided in them.
   if (reads.sessions) lines[0] = '· reading your past Claude Code sessions here for what was decided, with your Claude Code on this laptop (about a minute)';
   return { reads, lines };
@@ -221,11 +233,17 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
   const say = mode.say;
   const now = mode.now ?? new Date();
   const looked = reads.lb !== null;
-  // Each read's learnings are said the moment it lands, before the others finish.
-  const landed = (n: number, where: string, top: string | undefined) =>
-    n ? say(`· found ${n} learning${n === 1 ? '' : 's'} ${where}${top ? `, e.g. "${flatLine(top, 100)}"` : ''}`) : undefined;
-  void reads.sessions?.result.then((r) => landed(r.findings.length, 'in your past sessions', r.findings[0]?.headline), () => undefined);
-  void reads.reviews?.result.then((r) => landed(r.findings.length, "in this repo's pull requests", r.findings[0]?.title), () => undefined);
+  // Each learning is said the moment its read checks it, before the reads finish. A read that streamed
+  // none (a Claude Code too old to stream) still says what it found when it lands.
+  const heard = { prs: 0, sessions: 0 };
+  reads.live.listen((l) => {
+    heard[l.from]++;
+    say(liveLine(l));
+  });
+  const landed = (from: keyof typeof heard, n: number, where: string, top: string | undefined) =>
+    n && !heard[from] ? say(`· found ${n} learning${n === 1 ? '' : 's'} ${where}${top ? `, e.g. "${flatLine(top, 100)}"` : ''}`) : undefined;
+  void reads.sessions?.result.then((r) => landed('sessions', r.findings.length, 'in your past sessions', r.findings[0]?.headline), () => undefined);
+  void reads.reviews?.result.then((r) => landed('prs', r.findings.length, "in this repo's pull requests", r.findings[0]?.title), () => undefined);
   let lb: LookBackResult = NO_LOOK_BACK;
   if (reads.lb) {
     let settled = false;
@@ -247,12 +265,13 @@ export async function finishLookBack(repo: string, reads: LookBackReads,
     : Promise.resolve({ names: {}, model: 'none', why: null, sentItems: 0, tokens: 0 });
   let reviewResult: ReviewResult | null = null;
   if (reads.reviews) {
-    if (!reads.reviews.done) say('· still reading pull requests…');
+    // Not after it already showed a learning: that line says it's reading.
+    if (!reads.reviews.done && !heard.prs) say('· still reading pull requests…');
     reviewResult = await reads.reviews.result.catch(() => null);
   }
   let sessionResult: SessionResult | null = null;
   if (reads.sessions) {
-    if (!reads.sessions.done) say('· still reading your past sessions…');
+    if (!reads.sessions.done && !heard.sessions) say('· still reading your past sessions…');
     sessionResult = await reads.sessions.result.catch(() => null);
   }
   const named = await namedP;

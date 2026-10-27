@@ -65,6 +65,14 @@ process.stdin.on("end", () => {
   fs.writeFileSync(${JSON.stringify(log)} + (review ? "/reviews.txt" : past ? "/sessions.txt" : "/other.txt"), input);
   if (past && ${JSON.stringify(sessions === "fail")}) { console.log(JSON.stringify({ is_error: true, result: "API Error: overloaded" })); process.exit(1); }
   const answer = review ? ${JSON.stringify(reviews)} : past ? { findings: ${JSON.stringify(sessions === "fail" ? [] : sessions)} } : { findings: [] };
+  if (process.argv.includes("stream-json")) {
+    // As Claude Code streams it: the answer's JSON in pieces, then the result.
+    const json = JSON.stringify(answer);
+    for (let i = 0; i < json.length; i += 40) console.log(JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: json.slice(i, i + 40) } } }));
+    // The answer is written; the run ends a little later, as a real one does.
+    setTimeout(() => console.log(JSON.stringify({ type: "result", is_error: false, total_cost_usd: 0.01, structured_output: answer })), 1500);
+    return;
+  }
   console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.01, structured_output: answer }));
 });
 `,
@@ -86,7 +94,7 @@ process.exit(1);
 }
 
 /** A stand-in Trail that takes the handoff and its progress, keeping every body. */
-async function standInTrail(): Promise<{ url: string; progress: () => Array<Record<string, unknown>>; close: () => void }> {
+async function standInTrail(features: string[] = []): Promise<{ url: string; progress: () => Array<Record<string, unknown>>; close: () => void }> {
   const bodies: Array<{ path: string; body: Record<string, unknown> }> = [];
   const server = createServer((req, res) => {
     let raw = "";
@@ -97,7 +105,7 @@ async function standInTrail(): Promise<{ url: string; progress: () => Array<Reco
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(b));
       };
-      if (req.url === "/api/cli/handoffs") return reply(201, { url: "http://127.0.0.1/connect?state=s" });
+      if (req.url === "/api/cli/handoffs") return reply(201, { url: "http://127.0.0.1/connect?state=s", ...(features.length ? { features } : {}) });
       if (req.url === "/api/cli/handoffs/progress") return reply(202, {});
       return reply(410, { error: "gone" });
     });
@@ -156,6 +164,48 @@ test("an agent's init --pair reads the merged PRs' reviews and hands what review
     assert.equal(prs?.status, "done");
     assert.equal(prs?.count, "4 PRs", "the merged PRs it read");
     assert.equal(readdirSync(join(repo, ".trail", "learnings")).filter((f) => f.endsWith(".md")).length, 1, "saved in the repo, for the person to keep or drop on the page");
+  } finally {
+    trail.close();
+  }
+});
+
+test("a Trail that takes live learnings gets each one while init reads, then the final list in its place", { skip: process.platform === "win32" }, async () => {
+  const trail = await standInTrail(["live_found"]);
+  try {
+    const home = tmpRepo("pair-live-home");
+    mkdirSync(join(home, ".claude"));
+    const repo = githubRepo();
+    const { bin } = fakeTools();
+    const r = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(r.code, 0, r.err);
+    const progress = trail.progress();
+    const replaced = progress.findIndex((p) => p.replaceFound === true);
+    assert.ok(replaced >= 0, `the final list replaces what was shown live\n${JSON.stringify(progress)}`);
+    const live = progress.slice(0, replaced).flatMap((p) => (p.found as Found[] | undefined) ?? []);
+    assert.deepEqual(live.map((f) => f.title), ["API handlers report database failures instead of hiding them"], "shown while reading");
+    assert.equal(live[0]!.kind, "decision");
+    assert.ok(progress.slice(0, replaced).every((p) => p.done === undefined), "before the read was done");
+    const final = progress.slice(replaced).flatMap((p) => (p.found as Found[] | undefined) ?? []);
+    assert.deepEqual(final.filter((f) => f.kind === "decision").map((f) => f.title), ["API handlers report database failures instead of hiding them"]);
+    assert.notEqual(final[0]!.path, live[0]!.path, "the kept list has the learning's own file");
+  } finally {
+    trail.close();
+  }
+});
+
+test("a Trail that doesn't say it takes live learnings gets only the final list, as before", { skip: process.platform === "win32" }, async () => {
+  const trail = await standInTrail();
+  try {
+    const home = tmpRepo("pair-nolive-home");
+    mkdirSync(join(home, ".claude"));
+    const repo = githubRepo();
+    const { bin } = fakeTools();
+    const r = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(r.code, 0, r.err);
+    const progress = trail.progress();
+    assert.ok(progress.every((p) => p.replaceFound === undefined));
+    const found = progress.flatMap((p) => (p.found as Found[] | undefined) ?? []);
+    assert.equal(found.length, 1, JSON.stringify(progress));
   } finally {
     trail.close();
   }
@@ -248,8 +298,11 @@ test("init --pair reads past sessions and the PRs together: both learnings saved
     assert.match(sent, /\[person\] no, we tried caching orders last month/);
     assert.match(sent, /\[claude\] I can add an in-memory cache/, "Claude's side is read too");
     assert.deepEqual(titlesIn(repo), ["API handlers report database failures instead of hiding them", "Orders are read fresh from the database, not cached"]);
-    assert.match(r.err, /· found 1 learning in your past sessions, e\.g\. "Orders are read fresh from the database, not cached"/);
-    assert.match(r.err, /· found 1 learning in this repo's pull requests/);
+    // Each learning said the moment its read checked it.
+    assert.match(r.err, /· found "Orders are read fresh from the database, not cached" in your past sessions/);
+    assert.match(r.err, /· found "API handlers report database failures instead of hiding them" in pull requests/);
+    assert.doesNotMatch(r.err, /in pull requests\n[\s\S]*still reading pull requests/, "no 'still reading' after it already showed one");
+    assert.doesNotMatch(r.err, /in your past sessions\n[\s\S]*still reading your past sessions/);
     assert.doesNotMatch(r.err, /nothing to keep from your past sessions/, "no line saying nothing was found beside what was");
     const decisions = trail.progress().map((p) => (p.phases as PhaseRow[] | undefined)?.find((ph) => ph.id === "decisions")).filter(Boolean).at(-1);
     assert.equal(decisions?.count, "1 learning", "the page counts what the session read found");

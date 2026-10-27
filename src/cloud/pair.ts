@@ -18,6 +18,7 @@ import { graftCliPath } from "../claude/paths.js";
 import { noteAuthor } from "../notes/git-facts.js";
 import { repoName, repoPlace } from "../notes/home.js";
 import type { FoundSkill } from "../init/run.js";
+import type { LiveLearning } from "../init/live.js";
 import { skillName } from "../skills/skills.js";
 import { newState, pairSettled, PAIR_WAIT_MS, rememberPair } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
@@ -109,9 +110,12 @@ export class PairRun {
   private phases: Phase[];
   private chain: Promise<unknown> = Promise.resolve();
   private readonly fetchImpl?: typeof fetch;
+  /** Trail said it takes learnings while init reads, and puts the final list in their place (`live_found`). */
+  private readonly live: boolean;
 
-  private constructor(base: string, state: string, url: string, version: string, fetchImpl?: typeof fetch) {
+  private constructor(base: string, state: string, url: string, version: string, fetchImpl?: typeof fetch, live = false) {
     this.base = base;
+    this.live = live;
     this.fetchImpl = fetchImpl;
     this.state = state;
     this.url = url;
@@ -145,7 +149,7 @@ export class PairRun {
       opts.fetchImpl,
     );
     if (isError(reg)) return { error: reg.error, status: reg.status };
-    const run = new PairRun(base, state, reg.url, opts.version, opts.fetchImpl);
+    const run = new PairRun(base, state, reg.url, opts.version, opts.fetchImpl, reg.features?.includes("live_found") === true);
     run.send({ agent: opts.agent, phases: run.phases, log: [`Installed Trail-code ${opts.version}`] });
     return run;
   }
@@ -154,6 +158,18 @@ export class PairRun {
   phase(id: PhaseId, status: PhaseStatus, count = "", log?: string): void {
     this.phases = this.phases.map((p) => (p.id === id ? { ...p, status, count: count || p.count } : p));
     this.send({ phases: this.phases, ...(log ? { log: [log] } : {}) });
+  }
+
+  /**
+   * One learning a read just checked, for the page to show while init reads.
+   * Only to a Trail that takes them: it puts the final list in their place at
+   * {@link finish}, so one dropped later (a duplicate, or not about this
+   * code) never reaches the review. Its path is its own, not a file's.
+   */
+  learning(l: LiveLearning, author: string): void {
+    if (!this.live) return;
+    const hash = createHash("sha256").update(`live:${l.title}\n${l.body}`).digest("hex");
+    this.send({ found: [{ kind: "decision", path: `live/${hash.slice(0, 16)}`, title: l.title, author, body: l.body, hash, touches: [] }] });
   }
 
   /** The token step's end: the saving is an estimate (the pack against reading the files whole), and the page says so. */
@@ -218,7 +234,8 @@ export class PairRun {
     this.phases = this.phases.map((p) => (p.id === "learnings" ? { ...p, count: String(n) } : p));
     for (let i = 0; i < Math.max(n, 1); i += FOUND_PER_CALL) {
       const part = items.slice(i, i + FOUND_PER_CALL);
-      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m, machine)] } : {}) });
+      // The first part replaces what was shown while reading, on a Trail that took those.
+      this.send({ phases: this.phases, found: part, ...(i === 0 ? { log: [foundLine(learned, m, machine)], ...(this.live ? { replaceFound: true } : {}) } : {}) });
     }
     this.send({ done: true });
     return this.flush();

@@ -1675,6 +1675,10 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       else pair.phase("decisions", "done", "skipped");
       if (lookBack?.reads.reviews) pair.phase("prs", "running", "", "Reading pull requests");
       else pair.phase("prs", "done", "skipped");
+      // Each learning on the page the moment a read checks it, not when init is done.
+      const run = pair;
+      const author = noteAuthor(repo);
+      lookBack?.reads.live.listen((l) => run.learning(l, author));
     }
 
     if (children.length)

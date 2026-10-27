@@ -216,8 +216,8 @@ export async function registerHandoff(
   base: string,
   req: { state: string; repo: { key: string; name: string } | null; repos: HandoffRepo[]; author: string; pair?: string },
   fetchImpl?: Fetch,
-): Promise<{ url: string } | ApiError> {
-  const r = await call<{ url: string }>(base, "POST", "/api/cli/handoffs", req, { fetchImpl });
+): Promise<{ url: string; features?: string[] } | ApiError> {
+  const r = await call<{ url: string; features?: string[] }>(base, "POST", "/api/cli/handoffs", req, { fetchImpl });
   return isError(r) ? r : r.body;
 }
 

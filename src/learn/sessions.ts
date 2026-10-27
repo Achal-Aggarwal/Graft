@@ -168,7 +168,7 @@ export interface SessionResult {
  */
 export async function findSessionLearnings(
   repo: string,
-  opts: { env?: NodeJS.ProcessEnv; capMs?: number; since?: string; model?: string; full?: boolean } = {},
+  opts: { env?: NodeJS.ProcessEnv; capMs?: number; since?: string; model?: string; full?: boolean; onLearning?: (l: Learning) => void } = {},
 ): Promise<SessionResult> {
   const env = opts.env ?? process.env;
   const model = opts.model ?? COLD_START_MODEL;
@@ -188,7 +188,12 @@ export async function findSessionLearnings(
     `Past Claude Code sessions in this repository, newest first. Lines are what the person said, what Claude said, questions the person answered, plans, and the commits and PRs made. Find the learnings.\n\n${text}`,
     model,
     Math.max(1, Math.min(180_000, left())),
-    { system: BAR, schema: LEARNING_SCHEMA },
+    {
+      system: BAR,
+      schema: LEARNING_SCHEMA,
+      // Each one checked against the digest the moment it's written, for init to show then.
+      ...(opts.onLearning ? { onFinding: (raw: unknown) => verifyLearnings([raw], sources).forEach(opts.onLearning!) } : {}),
+    },
   );
   const durationMs = Date.now() - started;
   if (!asked.ok) return { ...base, read: read.length, durationMs, reason: asked.why === "not_installed" ? "no_claude" : "failed", why: asked.why, ...(asked.said ? { said: asked.said } : {}) };
@@ -226,13 +231,13 @@ export interface SessionRead {
  * which reads the sessions since), or TRAIL_NO_FETCH is set. A read that
  * finds no sessions leaves no mark, so a later init reads them.
  */
-export function beginSessionRead(repo: string, env: NodeJS.ProcessEnv = process.env, opts: { capMs?: number; again?: boolean } = {}): SessionRead | null {
+export function beginSessionRead(repo: string, env: NodeJS.ProcessEnv = process.env, opts: { capMs?: number; again?: boolean; onLearning?: (l: Learning) => void } = {}): SessionRead | null {
   try {
     if (env.TRAIL_NO_FETCH === "1") return null;
     const mark = readJson<{ at?: number; newest?: string }>(readMark(repo));
     if (mark?.at && !opts.again) return null;
     const since = mark?.at ? mark.newest : undefined;
-    const read: SessionRead = { started: Date.now(), done: false, result: findSessionLearnings(repo, { env, ...(opts.capMs === undefined ? {} : { capMs: opts.capMs }), ...(since ? { since } : {}) }) };
+    const read: SessionRead = { started: Date.now(), done: false, result: findSessionLearnings(repo, { env, ...(opts.capMs === undefined ? {} : { capMs: opts.capMs }), ...(since ? { since } : {}), ...(opts.onLearning ? { onLearning: opts.onLearning } : {}) }) };
     void read.result.then(() => (read.done = true));
     return read;
   } catch {

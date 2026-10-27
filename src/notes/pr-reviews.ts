@@ -378,7 +378,7 @@ export function verifyReviews(raw: unknown[], prs: ReviewedPR[], docs: { id: str
  */
 export async function findReviewLearnings(
   repo: string,
-  opts: { model?: string; timeoutMs?: number; gh?: string; limit?: number; capMs?: number; since?: string } = {},
+  opts: { model?: string; timeoutMs?: number; gh?: string; limit?: number; capMs?: number; since?: string; onLearning?: (f: ReviewFinding) => void } = {},
 ): Promise<ReviewResult> {
   const model = opts.model ?? COLD_START_MODEL;
   const started = Date.now();
@@ -404,7 +404,12 @@ export async function findReviewLearnings(
     `This repository's recent pull requests, newest first: descriptions, discussion, review summaries, inline review threads (marked "acted on" when the author changed the code or resolved it), PRs closed without merging, then revert commits and the repo's contributor and decision docs. Find the learnings.\n\n${text}${extra ? `\n\n${extra}` : ""}`,
     model,
     Math.max(1, Math.min(opts.timeoutMs ?? 180_000, left())),
-    { system: BAR, schema: LEARNING_SCHEMA },
+    {
+      system: BAR,
+      schema: LEARNING_SCHEMA,
+      // Each finding checked the moment it's written, so init can show it then; the list below is still the answer.
+      ...(opts.onLearning ? { onFinding: (raw: unknown) => verifyReviews([raw], read, docs).forEach(opts.onLearning!) } : {}),
+    },
   );
   const durationMs = Date.now() - started;
   if (!asked.ok) return { ...base, durationMs, reason: asked.why === "not_installed" ? "no_claude" : "failed", why: asked.why, ...(asked.said ? { said: asked.said } : {}) };
@@ -433,7 +438,7 @@ export interface ReviewRead {
  * committed what it found, TRAIL_NO_FETCH is set, or there's no `gh` to read
  * them with.
  */
-export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.env, gh = "gh", capMs?: number): ReviewRead | null {
+export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.env, gh = "gh", capMs?: number, onLearning?: (f: ReviewFinding) => void): ReviewRead | null {
   try {
     if (env.TRAIL_NO_FETCH === "1" || readJson<{ at?: number }>(readMark(repo))?.at) return null;
     // The same reviews give a teammate the same findings: once is enough for the repo.
@@ -442,7 +447,7 @@ export function beginReviewRead(repo: string, env: NodeJS.ProcessEnv = process.e
       track("cold_start", { source: "reviews", outcome: "no_gh" }, { repo });
       return null;
     }
-    const read: ReviewRead = { started: Date.now(), done: false, result: findReviewLearnings(repo, { gh, ...(capMs === undefined ? {} : { capMs }) }) };
+    const read: ReviewRead = { started: Date.now(), done: false, result: findReviewLearnings(repo, { gh, ...(capMs === undefined ? {} : { capMs }), ...(onLearning ? { onLearning } : {}) }) };
     void read.result.then(() => (read.done = true));
     return read;
   } catch {
