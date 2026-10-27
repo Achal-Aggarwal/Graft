@@ -149,11 +149,19 @@ export function trailOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
   return commandOnPath("trail", env);
 }
 
+/**
+ * A package's own bin folder, which npm puts on PATH only for the command it
+ * runs: npx's temporary copy (`~/.npm/_npx/<hash>/node_modules/.bin`) or a
+ * project's dependencies. Agents start with the person's own PATH, so a
+ * command found only there isn't installed for them.
+ */
+const PACKAGE_BIN = /[\\/]node_modules[\\/]\.bin[\\/]?$/;
+
 /** Whether an executable called `name` is on PATH: a few stats, no process spawned. */
 export function commandOnPath(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const names = process.platform === "win32" ? [`${name}.cmd`, `${name}.exe`, name] : [name];
   for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
+    if (!dir || PACKAGE_BIN.test(dir)) continue;
     for (const n of names) {
       try {
         if (statSync(join(dir, n)).isFile()) return true;

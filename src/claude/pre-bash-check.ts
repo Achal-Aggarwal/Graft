@@ -1,10 +1,11 @@
 /**
  * Before `git commit`, `git push` or `gh pr create`: `trail check` on the
- * branch, so the agent doesn't have to remember to run it. A conflict with a
- * learning stops the command once, with what the check found. The agent fixes
- * the change, or says why it's right in the commit message or PR and runs the
- * same command again, which goes through; a conflict it hasn't seen yet stops
- * it again. Loaded by pre-bash.ts only for those commands.
+ * branch, so the agent doesn't have to remember to run it. For now a conflict
+ * with a learning is a warning: the command runs, and the agent reads what the
+ * check found, once per set of conflicts. With SHIP_CHECK_STOPS on, it stops
+ * the command once instead: the agent fixes the change, or says why it's right
+ * in the commit message or PR and runs the same command again, which goes
+ * through. Loaded by pre-bash.ts only for those commands.
  *
  * Bounded by CHECK_BUDGET_MS, well inside the 5 s the hook is given, and fails
  * open: a check that is slow, broken or has nothing to say lets the command run.
@@ -17,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { brand } from '../brand.js';
+import { brand, repoWiredForTrail } from '../brand.js';
 import { sessionPath } from '../trace/gate-file.js';
 import type { PreBashDecision } from './pre-bash.js';
 
@@ -32,6 +33,16 @@ export interface ShipConflict {
 
 /** How long the check may take before the command runs without it. */
 export const CHECK_BUDGET_MS = 3500;
+
+/**
+ * Whether a conflict stops the command (once) or only warns. Off until
+ * `trail check`'s matching improves: it still flags word matches as conflicts
+ * (4 on PR #706, none real), and a stop on each of those costs a real commit.
+ */
+export const SHIP_CHECK_STOPS = false;
+
+/** What the commit check says before a commit, push or PR: stop it once, or let it run with a warning the agent reads. */
+export type ShipDecision = PreBashDecision | { warn: string };
 
 /** The words the reason starts with, which the Stop hook's `overrode` sign looks for (note-signals.ts). */
 export const SHIP_CHECK_LEAD = 'trail check found';
@@ -62,19 +73,21 @@ function shipping(command: string): string {
   return /\bgh\s+pr\s+create\b/.test(command) ? 'opening this PR' : /\bgit\s+push\b/.test(command) ? 'this push' : 'this commit';
 }
 
-/** The reason the agent reads: each conflict, then the way through. */
-export function shipReason(conflicts: ShipConflict[], command: string): string {
+/** The reason the agent reads: each conflict, then the way through (a stop) or what to do next (a warning). */
+export function shipReason(conflicts: ShipConflict[], command: string, stops = SHIP_CHECK_STOPS): string {
   const one = conflicts.length === 1;
   const lines = conflicts.slice(0, 5).map((f) => {
     const who = [f.source.title, f.source.author].filter(Boolean).join(', ');
     return `- ${f.file}${f.line ? `:${f.line}` : ''}: ${f.summary}${who ? ` (${who})` : ''}`;
   });
   const old = conflicts.map((f) => f.source.path).find(Boolean);
+  const replaces = old ? ` If the learning no longer holds, save a new learning that says what changed, with \`--replaces ${old.split('/').pop()}\`.` : '';
   return [
     `${SHIP_CHECK_LEAD} ${conflicts.length} conflict${one ? '' : 's'} with the team's learnings before ${shipping(command)}:`,
     ...lines,
-    `Fix the change, or if it's right anyway, say why in the commit message or PR description and run the same command again: it goes through then.` +
-      (old ? ` If the learning no longer holds, save a new learning that says what changed, with \`--replaces ${old.split('/').pop()}\`.` : ''),
+    stops
+      ? `Fix the change, or if it's right anyway, say why in the commit message or PR description and run the same command again: it goes through then.${replaces}`
+      : `It goes ahead; the check can flag a word match that isn't a real conflict. Read each one: if it's real, fix the change next and tell the user; if not, carry on.${replaces}`,
   ].join('\n');
 }
 
@@ -86,13 +99,14 @@ function sessionOf(input: unknown): string {
 }
 
 /**
- * The decision for a commit, push or PR command: deny once per set of
- * conflicts in a session, null otherwise. `check` is the branch's conflicts
- * (tests pass a stand-in).
+ * The decision for a commit, push or PR command, once per set of conflicts in
+ * a session: a warning (or, with `stops`, a deny), null otherwise. `check` is
+ * the branch's conflicts (tests pass a stand-in).
  */
-export function shipCheck(input: unknown, dir: string, command: string, check: (dir: string) => ShipConflict[] | null = branchConflicts, env: NodeJS.ProcessEnv = process.env): PreBashDecision | null {
+export function shipCheck(input: unknown, dir: string, command: string, check: (dir: string) => ShipConflict[] | null = branchConflicts, env: NodeJS.ProcessEnv = process.env, stops = SHIP_CHECK_STOPS): ShipDecision | null {
   try {
-    if (brand(env) !== 'trail') return null;
+    // Claude Code's hooks run with no TRAIL_INVOKED_AS, so the repo says whether it's trail's, as for every other hook.
+    if (brand(env) !== 'trail' && !repoWiredForTrail(dir)) return null;
     const conflicts = check(dir);
     if (!conflicts?.length) return null;
     const key = createHash('sha256')
@@ -109,7 +123,8 @@ export function shipCheck(input: unknown, dir: string, command: string, check: (
     if (seen.includes(key)) return null;
     mkdirSync(dirname(mark), { recursive: true });
     writeFileSync(mark, JSON.stringify([...seen, key].slice(-20)));
-    return { permissionDecision: 'deny', reason: shipReason(conflicts, command) };
+    const reason = shipReason(conflicts, command, stops);
+    return stops ? { permissionDecision: 'deny', reason } : { warn: reason };
   } catch {
     return null;
   }

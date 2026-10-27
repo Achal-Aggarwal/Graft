@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.28.0
+
+### Added
+
+- **Learnings arrive before an edit.** Just before Claude edits a file, it
+  gets the learnings on that file, instead of after (#708).
+- **A check before you commit.** Before `git commit`, `git push` or
+  `gh pr create`, trail runs `trail check`. When the change goes against a
+  learning, Claude is told which one and the command still runs. For now it
+  warns rather than stops, because the check can flag a word match that isn't
+  a real conflict (#708).
+- **One laptop, several workspaces.** Each repo goes to one Trail workspace,
+  and a laptop can be signed in to several. `trail workspace` lists them,
+  `trail workspace add --to <slug>` picks one, and
+  `trail logout --workspace <slug>` drops one (#708).
+
+### Fixed
+
+- **Agents get Trail's tools after a sign-in run through npx.** On a laptop
+  without `trail` installed, `npx -y @trailhq/trail-code login --code …`
+  signed in but pointed Claude Code, Codex and Cursor at a `trail` command
+  that wasn't there, so they got no tools. They now start Trail through npx.
+- **The check before a commit runs in Claude Code's hooks.** It only ran
+  when the `trail` command had started the process, which Claude Code's hooks
+  never do. It now runs in any repo set up for Trail, and it also spots
+  commits written as `git -C <folder> commit` or `git -c … commit`.
+- Signing out of the last workspace with `trail logout --workspace` now
+  removes Cursor's Trail entry too, as `trail logout` does.
+
 ## 0.27.0
 
 ### Added

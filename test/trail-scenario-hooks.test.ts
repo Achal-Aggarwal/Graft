@@ -8,13 +8,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BRAND_ENV } from '../src/brand.js';
 import { notesOnTouch } from '../src/claude/format.js';
 import { noteAsk, noteSignals } from '../src/claude/note-signals.js';
-import { shipCheck, shipReason } from '../src/claude/pre-bash-check.js';
+import { SHIP_CHECK_STOPS, shipCheck, shipReason } from '../src/claude/pre-bash-check.js';
+import { preBashContext } from '../src/claude/pre-bash.js';
 import { SHIP_COMMAND } from '../src/claude/pre-bash.js';
 import type { ShipConflict as CheckFinding } from '../src/claude/pre-bash-check.js';
 import { hookNotice, linkedNews } from '../src/cloud/nudge.js';
@@ -58,27 +59,55 @@ test('the learnings on a file are worded for the edit about to happen', () => {
 });
 
 test('a commit, a push and a PR are what the check runs before; nothing else pays for it', () => {
-  for (const c of ['git commit -m "x"', 'cd app && git push origin HEAD', 'gh pr create --fill']) assert.ok(SHIP_COMMAND.test(c), c);
-  for (const c of ['git status', 'git log --oneline', 'gh pr view 12', 'npm test']) assert.ok(!SHIP_COMMAND.test(c), c);
+  for (const c of ['git commit -m "x"', 'cd app && git push origin HEAD', 'gh pr create --fill', 'git -C app push', 'git -c user.email=a@b.c -c user.name="A B" commit -am x', "git -c 'core.hooksPath=/dev/null' commit", 'git --no-pager commit -m x']) assert.ok(SHIP_COMMAND.test(c), c);
+  for (const c of ['git status', 'git log --oneline', 'gh pr view 12', 'npm test', 'git -C app status', 'git log --grep commit', 'git show HEAD:push.md']) assert.ok(!SHIP_COMMAND.test(c), c);
 });
 
-test('a conflict stops the commit once, saying what and the way through; the same try again goes', () => {
+test('for now a conflict warns before the commit, once per set of conflicts, and the commit runs', () => {
+  assert.equal(SHIP_CHECK_STOPS, false, "a stop waits for trail check's matching to improve");
+  const dir = tmpRepo('ship-warn');
+  const input = { session_id: 'warn-1', tool_name: 'Bash', tool_input: { command: 'git commit -m "retry on 429"' } };
+  const first = shipCheck(input, dir, 'git commit -m "retry on 429"', () => [conflict]);
+  assert.ok(first && 'warn' in first, 'a warning, not a decision');
+  assert.match(first.warn, /^trail check found 1 conflict with the team's learnings before this commit:\n- src\/retry\.ts:12: retries again on a 429 \(Retries trip the rate limit, Priya\)\n/);
+  assert.match(first.warn, /It goes ahead; the check can flag a word match that isn't a real conflict\. Read each one: if it's real, fix the change next and tell the user; if not, carry on\./);
+  assert.equal(shipCheck(input, dir, 'git commit -m "retry on 429"', () => [conflict]), null, 'said once');
+  const out = JSON.parse(preBashContext(input, first.warn));
+  assert.deepEqual(Object.keys(out.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName'], 'no permission decision: the command runs as it would have');
+  assert.equal(preBashContext({ ...input, turn_id: 't1' }, first.warn), '', 'Codex has no field for it: nothing, and the command runs');
+});
+
+test("in a hook, with no TRAIL_INVOKED_AS, a repo wired for trail still gets the check; a graft repo doesn't", () => {
+  const wired = tmpRepo('ship-wired');
+  mkdirSync(join(wired, '.trail'), { recursive: true });
+  writeFileSync(join(wired, '.trail', 'hook.cjs'), '');
+  const input = { session_id: 'wired-1', tool_name: 'Bash', tool_input: { command: 'git commit -m x' } };
+  const found = shipCheck(input, wired, 'git commit -m x', () => [conflict], {});
+  assert.ok(found && 'warn' in found, 'the check ran with no brand in the environment');
+  const plain = tmpRepo('ship-graft');
+  assert.equal(shipCheck({ ...input, session_id: 'wired-2' }, plain, 'git commit -m x', () => [conflict], {}), null);
+});
+
+test('with the stop on, a conflict stops the commit once, saying what and the way through; the same try again goes', () => {
   const dir = tmpRepo('ship-check');
   const input = { session_id: 'ship-1', tool_name: 'Bash', tool_input: { command: 'git commit -m "retry on 429"' } };
-  const first = shipCheck(input, dir, 'git commit -m "retry on 429"', () => [conflict]);
-  assert.equal(first?.permissionDecision, 'deny');
-  assert.match(first!.reason, /^trail check found 1 conflict with the team's learnings before this commit:\n- src\/retry\.ts:12: retries again on a 429 \(Retries trip the rate limit, Priya\)\n/);
-  assert.match(first!.reason, /say why in the commit message or PR description and run the same command again: it goes through then\. If the learning no longer holds, save a new learning that says what changed, with `--replaces 2026-10-07-retries-trip-priya\.md`\./);
-  assert.equal(shipCheck(input, dir, 'git commit -m "retry on 429"', () => [conflict]), null, 'the second try goes through');
+  const stop = (i: unknown, c: string, found: () => CheckFinding[] | null) => shipCheck(i, dir, c, found, process.env, true);
+  const first = stop(input, 'git commit -m "retry on 429"', () => [conflict]);
+  assert.ok(first && 'permissionDecision' in first);
+  assert.equal(first.permissionDecision, 'deny');
+  assert.match(first.reason, /^trail check found 1 conflict with the team's learnings before this commit:\n- src\/retry\.ts:12: retries again on a 429 \(Retries trip the rate limit, Priya\)\n/);
+  assert.match(first.reason, /say why in the commit message or PR description and run the same command again: it goes through then\. If the learning no longer holds, save a new learning that says what changed, with `--replaces 2026-10-07-retries-trip-priya\.md`\./);
+  assert.equal(stop(input, 'git commit -m "retry on 429"', () => [conflict]), null, 'the second try goes through');
   const other = { ...conflict, file: 'src/client.ts' };
-  assert.equal(shipCheck(input, dir, 'git push', () => [conflict, other])?.permissionDecision, 'deny', 'a conflict it has not seen stops it again');
-  assert.equal(shipCheck({ ...input, session_id: 'ship-2' }, dir, 'git commit', () => []), null, 'no conflict, no stop');
-  assert.equal(shipCheck({ ...input, session_id: 'ship-3' }, dir, 'git commit', () => null), null, 'a check that could not say lets it run');
-  assert.match(shipReason([conflict], 'gh pr create --fill'), /before opening this PR:/);
+  const again = stop(input, 'git push', () => [conflict, other]);
+  assert.ok(again && 'permissionDecision' in again && again.permissionDecision === 'deny', 'a conflict it has not seen stops it again');
+  assert.equal(stop({ ...input, session_id: 'ship-2' }, 'git commit', () => []), null, 'no conflict, no stop');
+  assert.equal(stop({ ...input, session_id: 'ship-3' }, 'git commit', () => null), null, 'a check that could not say lets it run');
+  assert.match(shipReason([conflict], 'gh pr create --fill', true), /before opening this PR:/);
 });
 
 test('a conflict the work shipped anyway, files untouched, asks for a replacing learning', () => {
-  const stop = shipReason([conflict], 'git commit -m x');
+  const stop = shipReason([conflict], 'git commit -m x', true);
   const overrode = jsonl(prompt('ship it'), edit('src/retry.ts'), bash('git commit -m x', stop, true), bash('git commit -m "x: 429 is retried once by design"'));
   assert.deepEqual(kinds(overrode), ['overrode', 'shipped']);
   const s = noteSignals(overrode, REPO)[0]!;

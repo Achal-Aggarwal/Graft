@@ -39,7 +39,8 @@ const DECISIONS = new Set(['allow', 'ask', 'deny']);
  * always null. Never throws.
  */
 /** A commit, a push or a PR: the commands `trail check` runs before (pre-bash-check.ts). One regex for every other command. */
-export const SHIP_COMMAND = /\b(?:git\s+(?:commit|push)|gh\s+pr\s+create)\b/;
+// git's own options may come first: `git -C app push`, `git -c user.name="A B" commit`, `git --no-pager commit`.
+export const SHIP_COMMAND = /\b(?:git(?:\s+(?:-[cC]\s*(?:[^\s"']|"[^"]*"|'[^']*')+|--[\w-]+(?:=\S+)?))*\s+(?:commit|push)|gh\s+pr\s+create)\b/;
 
 export function preBash(_input: unknown, _dir: string): PreBashDecision | null {
   return null;
@@ -90,6 +91,16 @@ export function preBashOutput(input: unknown, dir: string, decide: (input: unkno
   } catch {
     return '';
   }
+}
+
+/**
+ * A warning the agent reads before the command runs, with no decision: the
+ * command goes through as it would have. Claude Code takes it as context;
+ * Codex has no such field, so it gets nothing.
+ */
+export function preBashContext(input: unknown, text: string): string {
+  if (!text || codexPayload(input)) return '';
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: text } });
 }
 
 /** Shell tools by host: Claude Code's Bash (and PowerShell), Cursor's Shell, Copilot CLI's bash. */
@@ -255,7 +266,7 @@ export async function main(event = 'pre-bash', decide: (input: unknown, dir: str
       if (await standsDown()) return;
       const { shipCheck } = await import('./pre-bash-check.js');
       const decision = shipCheck(input, dir, command);
-      const reply = preBashOutput(input, dir, () => decision);
+      const reply = decision && 'warn' in decision ? preBashContext(input, decision.warn) : preBashOutput(input, dir, () => decision);
       if (reply) return void process.stdout.write(reply);
     }
     if (skillsPrefilter(input, command)) {

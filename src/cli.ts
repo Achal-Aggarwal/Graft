@@ -2332,6 +2332,7 @@ function logoutCommand(name = "logout"): Command {
         if (all.length === 1) {
           clearPending();
           removeBrainsServer(homedir());
+          removeCursorBrainsServer(homedir());
         }
         console.error(`✓ disconnected from workspace ${gone.workspace.name} · learnings stay in your repos' .trail/`);
         return;
