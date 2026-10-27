@@ -719,7 +719,7 @@ grouped(program.command("build"), GROUP.setup)
       { repo: buildRoot },
     );
     for (const e of g.errors) console.error(`✗ ${e}`);
-    // A language whose native grammar didn't load was parsed by its WASM stand-in:
+    // A language whose depth grammar didn't load was parsed by its breadth stand-in:
     // say which, and the install that fixes it. Nothing when everything loaded.
     const fallbackNotice = nativeFallbackNotice(g.nativeFallback, readPackageName(import.meta.url));
     if (fallbackNotice) console.error(fallbackNotice);
