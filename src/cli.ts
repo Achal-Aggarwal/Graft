@@ -1444,11 +1444,12 @@ function useServerOption(raw: string | undefined): boolean {
  * is done when `mapped` fires, the past sessions when `learned` does. Nothing
  * to say for a run that read no sessions (that step is already marked).
  */
-function pairProgress(pair: PairRun): InitProgress {
+function pairProgress(pair: PairRun, readsSessions = false): InitProgress {
   return {
     mapped: (m) => pair.phase("files", "done", m.files ? `${m.files.toLocaleString("en-US")} files` : "", m.files ? `Mapped ${m.files.toLocaleString("en-US")} files` : "Mapped the code"),
     learned: (l) => {
-      if (l.sessions <= 0) return;
+      // The session read marks the step itself, with what it found, the moment it lands.
+      if (l.sessions <= 0 || readsSessions) return;
       pair.phase("decisions", "done", `${l.sessions} sessions`, `Read ${l.sessions} past Claude sessions`);
     },
   };
@@ -1657,9 +1658,22 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
     const lookBack = TRAIL && wantClaude && (!laptop || laptop.includes("claude")) ? beginLookBack(repo, { plain: opts.plain === true, again: opts.lookBack === true, pair: pair !== null }) : null;
     for (const line of lookBack?.lines ?? []) console.error(line);
     if (pair) {
-      if (lookBack?.reads.lb) pair.phase("decisions", "running", "", "Reading past Claude sessions");
+      const sessions = lookBack?.reads.sessions;
+      if (sessions) {
+        pair.phase("decisions", "running", "", "Reading what was decided in past Claude sessions");
+        const run = pair;
+        void sessions.result.then(
+          (r) =>
+            r.reason === "no_claude" || r.reason === "failed"
+              ? run.phase("decisions", "done", "skipped", "Claude Code couldn't read past sessions this time")
+              : r.reason === "no_sessions"
+                ? run.phase("decisions", "done", "none here", "No past Claude sessions here")
+                : run.phase("decisions", "done", `${r.findings.length} learning${r.findings.length === 1 ? "" : "s"}`, `Read ${r.read} past Claude session${r.read === 1 ? "" : "s"}: ${r.findings.length} learning${r.findings.length === 1 ? "" : "s"}`),
+          () => run.phase("decisions", "done", "skipped"),
+        );
+      } else if (lookBack?.reads.lb) pair.phase("decisions", "running", "", "Reading past Claude sessions");
       else pair.phase("decisions", "done", "skipped");
-      if (lookBack?.reads.reviews) pair.phase("prs", "running", "", "Reading review comments on merged PRs");
+      if (lookBack?.reads.reviews) pair.phase("prs", "running", "", "Reading pull requests");
       else pair.phase("prs", "done", "skipped");
     }
 
@@ -1707,7 +1721,7 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
 
     // --pair hears the same stages --connect does; only the ones InitProgress
     // has no slot for (a read starting, the PR read, nothing to read) stay inline.
-    const report: InitProgress | undefined = pair ? pairProgress(pair) : progress;
+    const report: InitProgress | undefined = pair ? pairProgress(pair, Boolean(lookBack?.reads.sessions)) : progress;
     if (report?.mapped) {
       const g = loadGraphCached(contextDirFor(repo, children.length ? undefined : program.opts<GlobalOpts>().dir));
       report.mapped({
@@ -1758,13 +1772,21 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const screen = tty && !pair;
       const learned = await finishLookBack(repo, lookBack.reads, { yes: opts.yes === true, verbose: opts.verbose === true, say: (l) => console.error(l), ...(screen ? { io: { stdin: process.stdin, stdout: process.stderr } } : {}) });
       // #662's lines for the team rows it kept with no screen, in its words.
-      const { fromReviews, fromMemory } = learned.teamKept ?? { fromReviews: null, fromMemory: null };
+      const { fromReviews, fromSessions, fromMemory } = learned.teamKept ?? { fromReviews: null, fromSessions: null, fromMemory: null };
       if (fromReviews?.saved.length) {
         const n = fromReviews.saved.length;
-        const what = n < fromReviews.offered ? `kept ${n} of the ${fromReviews.offered} things` : `learned ${n} thing${n === 1 ? "" : "s"}`;
-        console.error(`✓ ${what} reviewers made authors change, from the last ${fromReviews.result.prs} merged PRs here`);
+        const what = n < fromReviews.offered ? `kept ${n} of the ${fromReviews.offered} learnings` : `${n} learning${n === 1 ? "" : "s"}`;
+        console.error(`✓ ${what} from this repo's pull requests`);
         // saveReviewFindings keeps the findings' order.
-        fromReviews.saved.forEach((note, i) => console.error(`    for your team · from review on ${(fromReviews.kept[i]?.prs ?? []).map((n) => `#${n}`).join(", ")}: ${note.title}`));
+        fromReviews.saved.forEach((note, i) => {
+          const prs = fromReviews.kept[i]?.prs ?? [];
+          console.error(`    for your team · ${note.title}${prs.length ? ` (${prs.map((n) => `#${n}`).join(", ")})` : ""}`);
+        });
+      }
+      if (fromSessions?.saved.length) {
+        const n = fromSessions.saved.length;
+        console.error(`✓ ${n < fromSessions.offered ? `kept ${n} of the ${fromSessions.offered} learnings` : `${n} learning${n === 1 ? "" : "s"}`} from your past Claude sessions here`);
+        for (const note of fromSessions.saved) console.error(`    for your team · ${note.title}`);
       }
       if (fromMemory?.saved.length) {
         console.error(`✓ kept ${fromMemory.saved.length} of the ${fromMemory.offered} notes your Claude keeps about this repo`);
@@ -1775,10 +1797,10 @@ async function runInitCommand(dir: string, opts: InitOptions, progress?: InitPro
       const prs = learned.read?.prs;
       if (pair && prs !== undefined && prs !== null) {
         const n = fromReviews?.saved.length ?? 0;
-        pair.phase("prs", "done", `${prs} PRs`, `Read ${prs} merged PRs: ${n} thing${n === 1 ? "" : "s"} reviewers made authors change`);
+        pair.phase("prs", "done", `${prs} PRs`, `Read ${prs} merged PRs: ${n} learning${n === 1 ? "" : "s"}`);
       }
       // The team learnings kept with no screen, said in no past session; after a screen the page lists the repo's own.
-      const notes = [...(fromReviews?.saved ?? []), ...(fromMemory?.saved ?? [])].map((note) => ({ note, sessions: 0 }));
+      const notes = [...(fromReviews?.saved ?? []), ...(fromSessions?.saved ?? []), ...(fromMemory?.saved ?? [])].map((note) => ({ note, sessions: 0 }));
       report?.learned?.({ notes, sessions: sessionsRead });
       learnedNow = learned.kept > 0;
       teamSaved = learned.team;

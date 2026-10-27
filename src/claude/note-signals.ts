@@ -336,23 +336,23 @@ export function noteSignals(jsonl: string, repo: string): NoteSignal[] {
   return out;
 }
 
-const SAVE = '`trail note --title "<the fact, not the task>"`';
-const CLOSE = 'Sections: ## Decided, ## Tried and ruled out, ## Watch out. A summary, never a transcript, nothing secret. Then finish as trail\'s output asks.';
+const SAVE = '`trail note --title "<the decision in plain words a teammate understands, no file names>"`';
+const CLOSE = 'Put files, commands and values in the body under "In the code:". Sections: ## Decided, ## Tried and ruled out, ## Watch out. A summary, never a transcript, nothing secret. Then finish as trail\'s output asks.';
 
 /** What the agent is told: the sign first, since Claude Code folds long hook output to its first lines. */
 export function noteAsk(s: NoteSignal): string {
   const skip = 'Nothing worth keeping? Say so and stop.';
   const first =
     s.kind === 'fixed'
-      ? `${s.what} If the cause isn't obvious from the diff, save it: ${SAVE}, naming the file and the why. ${skip}`
+      ? `${s.what} If the cause isn't obvious from the diff, save it: ${SAVE}, with the why. ${skip}`
       : s.kind === 'corrected'
-        ? `${s.what} Save it as a learning so nobody has to say it again: ${SAVE}, naming the file it's about; add --personal if it's about how this person likes to work. ${skip}`
+        ? `${s.what} Save it as a learning so nobody has to say it again: ${SAVE}; add --personal if it's about how this person likes to work. ${skip}`
         : s.kind === 'undone'
-          ? `${s.what} If you dropped an approach, save why under ## Tried and ruled out: ${SAVE}, naming the file. ${skip}`
+          ? `${s.what} If you dropped an approach, save why under ## Tried and ruled out: ${SAVE}. ${skip}`
           : s.kind === 'chose'
             ? `${s.what} If the choice matters to the next person, save it under ## Decided, with the options you dropped and why under ## Tried and ruled out: ${SAVE}. ${skip}`
             : s.kind === 'explored'
-              ? `${s.what} If it found where something lives or why it works the way it does, and the code won't say so plainly, save it: ${SAVE}, naming the files. ${skip}`
+              ? `${s.what} If it found where something lives or why it works the way it does, and the code won't say so plainly, save it: ${SAVE}. ${skip}`
               : `${s.what} If the session found what the diff won't tell the next person (a cause, a dropped approach, how something is done here), save it now so it ships with the change: ${SAVE}. ${skip}`;
   return `[trail] ${first}\n${CLOSE}`;
 }

@@ -56,3 +56,10 @@ test("the trail skill carries the nine learned-skills lines, word for word, each
   assert.doesNotMatch(trail, /—/);
   assert.doesNotMatch(skillTemplate("graft"), /trail skills add/, "graft's skill is unchanged");
 });
+
+test("the skill asks for a plain headline a teammate understands and puts the files in the body", () => {
+  const src = skillTemplate("trail").replace(/\s+/g, ' ');
+  assert.equal(src.split('--title "<the decision in plain words a teammate understands, no file names>"').length - 1, 2, "both save lines ask for the plain headline");
+  assert.match(src, /Put files, commands and values in the body under "In the code:"\./);
+  assert.doesNotMatch(src, /the fact, not the task/);
+});

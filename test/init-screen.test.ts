@@ -31,7 +31,7 @@ test("the screen, skills on: every line of 4.7, the cursor on the first item", (
     "  [x] 3  \"explain it simply, one example first\"",
     "         You said this on 12 days. · just for you, in every repo",
     "",
-    "↑↓ move · space tick · s see the steps · enter keep ticked · n keep nothing",
+    "↑↓ move · space tick · s see more · enter keep ticked · n keep nothing",
     "w every repo or this repo · r add a learning to this repo (committed) · esc decide later",
   ]);
   for (const l of lines) assert.doesNotMatch(l, WORDS, l);

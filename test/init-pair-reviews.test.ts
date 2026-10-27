@@ -1,14 +1,14 @@
 /**
  * `trail init --pair CODE` run by a coding agent: the person asked for Trail on
  * its page, so this run reads the repo's merged PR reviews like the person's own
- * terminal does, and what reviewers made authors change reaches the page as
+ * terminal does, and what the PRs show the team decided reaches the page as
  * found learnings. Without `--pair`, an agent's init still starts no `claude`.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { tmpRepo } from "./helpers.js";
@@ -33,19 +33,21 @@ function githubRepo(): string {
   return repo;
 }
 
-/** A signed-in `gh` that answers the GraphQL call, and a `claude` that names one finding from the reviews; both log. */
-function fakeTools(): { bin: string; log: string } {
+/** A signed-in `gh` that answers the GraphQL call, and a `claude` that names one finding from the reviews (and `sessions` from past sessions); both log. */
+function fakeTools(sessions: object[] | "fail" = []): { bin: string; log: string } {
   const bin = mkdtempSync(join(tmpdir(), "pair-tools-"));
   const log = join(bin, "log");
   mkdirSync(log);
   const reviews = {
     findings: [
       {
-        title: "Return a 500 when db.query fails in src/api",
-        body: "## Decided\n- Handlers in `src/api/` log the db.query error and return a 500.",
+        headline: "API handlers report database failures instead of hiding them",
+        why: "Reviewers kept catching handlers that swallowed a failed query.",
+        for_agent: "Handlers in `src/api/` log the db.query error and return a 500.",
+        kind: "decided",
         evidence: [
-          { pr: 41, quote: "swallows the error from db.query" },
-          { pr: 38, quote: "must return a 500 when db.query fails" },
+          { source: "#41", quote: "swallows the error from db.query" },
+          { source: "#38", quote: "must return a 500 when db.query fails" },
         ],
       },
     ],
@@ -58,9 +60,12 @@ if (process.argv.includes("--version")) { console.log("9.9.9"); process.exit(0);
 let input = "";
 process.stdin.on("data", (b) => (input += b));
 process.stdin.on("end", () => {
-  const review = input.startsWith("Inline review comments");
-  fs.writeFileSync(${JSON.stringify(log)} + (review ? "/reviews.txt" : "/other.txt"), input);
-  console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.01, structured_output: review ? ${JSON.stringify(reviews)} : { findings: [] } }));
+  const review = input.startsWith("This repository's recent pull requests");
+  const past = input.startsWith("Past Claude Code sessions in this repository");
+  fs.writeFileSync(${JSON.stringify(log)} + (review ? "/reviews.txt" : past ? "/sessions.txt" : "/other.txt"), input);
+  if (past && ${JSON.stringify(sessions === "fail")}) { console.log(JSON.stringify({ is_error: true, result: "API Error: overloaded" })); process.exit(1); }
+  const answer = review ? ${JSON.stringify(reviews)} : past ? { findings: ${JSON.stringify(sessions === "fail" ? [] : sessions)} } : { findings: [] };
+  console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.01, structured_output: answer }));
 });
 `,
   );
@@ -146,7 +151,7 @@ test("an agent's init --pair reads the merged PRs' reviews and hands what review
 
     const progress = trail.progress();
     const found = progress.flatMap((p) => (p.found as Found[] | undefined) ?? []);
-    assert.deepEqual(found.filter((f) => f.kind === "decision").map((f) => f.title), ["Return a 500 when db.query fails in src/api"], JSON.stringify(progress));
+    assert.deepEqual(found.filter((f) => f.kind === "decision").map((f) => f.title), ["API handlers report database failures instead of hiding them"], JSON.stringify(progress));
     const prs = progress.map((p) => (p.phases as PhaseRow[] | undefined)?.find((ph) => ph.id === "prs")).filter(Boolean).at(-1);
     assert.equal(prs?.status, "done");
     assert.equal(prs?.count, "4 PRs", "the merged PRs it read");
@@ -188,7 +193,7 @@ for (const [how, entry] of [["graft", join("src", "bin", "graft.ts")], ["no name
       assert.equal(code, 0, err);
       assert.ok(existsSync(join(repo, ".trail", "hook.cjs")), `wired as Trail\n${err}`);
       const found = trail.progress().flatMap((p) => (p.found as Found[] | undefined) ?? []);
-      assert.deepEqual(found.filter((f) => f.kind === "decision").map((f) => f.title), ["Return a 500 when db.query fails in src/api"], err);
+      assert.deepEqual(found.filter((f) => f.kind === "decision").map((f) => f.title), ["API handlers report database failures instead of hiding them"], err);
       // This machine has no `trail` command (PATH holds only the stand-ins and git): say how to get it.
       assert.match(err, /the trail command isn't installed here · npm install -g @trailhq\/trail-code/);
     } finally {
@@ -196,3 +201,104 @@ for (const [how, entry] of [["graft", join("src", "bin", "graft.ts")], ["no name
     }
   });
 }
+
+/* ---- Both reads together: past sessions and the PRs ---- */
+
+/** One past session in `repo`, today, where the person corrected Claude. */
+function pastSession(repo: string, home: string): void {
+  const dir = join(home, ".claude", "projects", repo.replace(/[^A-Za-z0-9]/g, "-"));
+  mkdirSync(dir, { recursive: true });
+  const at = new Date().toISOString();
+  const row = (o: object) => JSON.stringify({ cwd: repo, timestamp: at, sessionId: "abcdef12-3456", ...o });
+  writeFileSync(
+    join(dir, "abcdef12-3456.jsonl"),
+    [
+      row({ type: "user", message: { role: "user", content: "make the orders endpoint faster with a cache" } }),
+      row({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "I can add an in-memory cache in front of db.query for the orders list." }] } }),
+      row({ type: "user", message: { role: "user", content: "no, we tried caching orders last month and it served stale totals, keep reading from the database" } }),
+    ].join("\n") + "\n",
+  );
+}
+
+const fromSessions = {
+  headline: "Orders are read fresh from the database, not cached",
+  why: "A cache was tried and served stale totals.",
+  for_agent: "src/api/orders.ts reads with db.query on every request.",
+  kind: "ruled_out",
+  evidence: [{ source: "session abcdef12", quote: "we tried caching orders last month and it served stale totals" }],
+};
+
+const titlesIn = (repo: string) =>
+  readdirSync(join(repo, ".trail", "learnings"))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => readFileSync(join(repo, ".trail", "learnings", f), "utf8").match(/^title: "?(.*?)"?$/m)?.[1] ?? "")
+    .sort();
+
+test("init --pair reads past sessions and the PRs together: both learnings saved with plain titles, each said as it lands", { skip: process.platform === "win32" }, async () => {
+  const trail = await standInTrail();
+  try {
+    const home = tmpRepo("both-reads-home");
+    mkdirSync(join(home, ".claude"));
+    const repo = githubRepo();
+    pastSession(repo, home);
+    const { bin, log } = fakeTools([fromSessions]);
+    const r = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(r.code, 0, r.err);
+    const sent = readFileSync(join(log, "sessions.txt"), "utf8");
+    assert.match(sent, /\[person\] no, we tried caching orders last month/);
+    assert.match(sent, /\[claude\] I can add an in-memory cache/, "Claude's side is read too");
+    assert.deepEqual(titlesIn(repo), ["API handlers report database failures instead of hiding them", "Orders are read fresh from the database, not cached"]);
+    assert.match(r.err, /· found 1 learning in your past sessions, e\.g\. "Orders are read fresh from the database, not cached"/);
+    assert.match(r.err, /· found 1 learning in this repo's pull requests/);
+    assert.doesNotMatch(r.err, /nothing to keep from your past sessions/, "no line saying nothing was found beside what was");
+    const decisions = trail.progress().map((p) => (p.phases as PhaseRow[] | undefined)?.find((ph) => ph.id === "decisions")).filter(Boolean).at(-1);
+    assert.equal(decisions?.count, "1 learning", "the page counts what the session read found");
+    const saved = readFileSync(join(repo, ".trail", "learnings", readdirSync(join(repo, ".trail", "learnings")).find((f) => f.includes("orders-are-read"))!), "utf8");
+    assert.match(saved, /## Tried and ruled out\n- A cache was tried and served stale totals\.\n- In the code: src\/api\/orders\.ts reads with db\.query on every request\./);
+    assert.match(saved, /src: init-sessions/);
+
+    // Again: both reads are marked done for this repo, so Claude isn't asked twice.
+    rmSync(log, { recursive: true });
+    mkdirSync(log);
+    const again = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(again.code, 0, again.err);
+    assert.ok(!existsSync(join(log, "sessions.txt")) && !existsSync(join(log, "reviews.txt")), "nothing read twice");
+  } finally {
+    trail.close();
+  }
+});
+
+test("the same learning from past sessions and the PRs is saved once, as the PR one", { skip: process.platform === "win32" }, async () => {
+  const trail = await standInTrail();
+  try {
+    const home = tmpRepo("same-twice-home");
+    mkdirSync(join(home, ".claude"));
+    const repo = githubRepo();
+    pastSession(repo, home);
+    const twin = { ...fromSessions, headline: "API handlers report database failures, never hiding them", evidence: [{ source: "abcdef12", quote: "keep reading from the database" }] };
+    const { bin } = fakeTools([twin]);
+    const r = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(titlesIn(repo), ["API handlers report database failures instead of hiding them"]);
+  } finally {
+    trail.close();
+  }
+});
+
+test("a session read Claude couldn't finish says why, and the page says skipped, not 0 learnings", { skip: process.platform === "win32" }, async () => {
+  const trail = await standInTrail();
+  try {
+    const home = tmpRepo("sess-fail-home");
+    mkdirSync(join(home, ".claude"));
+    const repo = githubRepo();
+    pastSession(repo, home);
+    const { bin } = fakeTools("fail");
+    const r = await agentInit(repo, home, bin, ["--pair", "X4GM5OQU4NIA65ZR", "--server", trail.url]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.err, /so trail couldn't read your past sessions\. To try again: trail init --look-back/);
+    const decisions = trail.progress().map((p) => (p.phases as PhaseRow[] | undefined)?.find((ph) => ph.id === "decisions")).filter(Boolean).at(-1);
+    assert.equal(decisions?.count, "skipped");
+  } finally {
+    trail.close();
+  }
+});

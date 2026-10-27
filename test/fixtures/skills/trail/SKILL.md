@@ -37,8 +37,9 @@ Save one when the session found what the code can't tell the next person:
 - the user correcting how something is done here.
 
 Save it before you commit or open the PR, so it ships with the change:
-`trail note --title "<the fact, not the task>"` with the text on stdin. Name
-the files or functions it's about, and give each choice its reason.
+`trail note --title
+"<the decision in plain words a teammate understands, no file names>"` with the text on stdin. Give each
+choice its reason. Put files, commands and values in the body under "In the code:".
 
 A learning is followed by default, and the person can say otherwise in the
 moment. When the user says one must hold even if someone asks otherwise
@@ -244,7 +245,7 @@ one saved you work, close your reply with one short line crediting it, e.g.
 and ~12 min`) only when trail prints that with it; claim nothing it doesn't.
 
 To save one (when is under Saving a learning above): `trail note --title
-"<the fact, not the task>"` with the text on stdin, under `## Decided`,
+"<the decision in plain words a teammate understands, no file names>"` with the text on stdin, under `## Decided`,
 `## Tried and ruled out` and `## Watch out`. A summary, never a transcript,
 and nothing secret.
 

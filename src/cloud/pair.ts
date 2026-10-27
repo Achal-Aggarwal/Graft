@@ -119,7 +119,7 @@ export class PairRun {
       { id: "install", label: "Install Trail-code", status: "done", count: version },
       { id: "files", label: "Map the code", status: "todo", count: "" },
       { id: "tokens", label: "Measure one lookup", status: "todo", count: "" },
-      { id: "prs", label: "Read pull request reviews", status: "todo", count: "" },
+      { id: "prs", label: "Read pull requests", status: "todo", count: "" },
       { id: "decisions", label: "Read past Claude sessions", status: "todo", count: "" },
       { id: "team", label: "Check your team's branches", status: "todo", count: "" },
       { id: "learnings", label: "Write learnings", status: "todo", count: "" },

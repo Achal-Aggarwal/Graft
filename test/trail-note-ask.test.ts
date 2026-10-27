@@ -37,7 +37,7 @@ test('a check that failed, then passed after an edit to the code, is a sign', ()
   const [s] = noteSignals(fixed, REPO);
   assert.equal(s?.kind, 'fixed');
   assert.equal(s?.what, 'npm test failed once, then passed after your change to src/retry.ts.');
-  assert.match(noteAsk(s!), /^\[trail\] npm test failed once, then passed after your change to src\/retry\.ts\. If the cause isn't obvious from the diff, save it: `trail note --title "<the fact, not the task>"`, naming the file and the why\. Nothing worth keeping\? Say so and stop\.\n/);
+  assert.match(noteAsk(s!), /^\[trail\] npm test failed once, then passed after your change to src\/retry\.ts\. If the cause isn't obvious from the diff, save it: `trail note --title "<the decision in plain words a teammate understands, no file names>"`, with the why\. Nothing worth keeping\? Say so and stop\.\nPut files, commands and values in the body under "In the code:"\./);
 
   const thrice = jsonl(prompt('fix it'), bash('go test ./...', 'x', true), edit('a.go'), bash('go test ./pkg/...', 'x', true), bash('go test -run X ./...', 'x', true), edit('b.go'), bash('go test ./...', 'ok'));
   assert.match(noteSignals(thrice, REPO)[0]!.what, /^go test failed 3 times, then passed after your change to b\.go\.$/);
