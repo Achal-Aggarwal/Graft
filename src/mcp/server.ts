@@ -13,6 +13,7 @@ import { maybeFlushInBackground, track } from '../telemetry/index.js';
 import { brand, inBrand } from '../brand.js';
 import { canonicalToolName, GRAFT_MCP_TOOL_NAMES } from './tool-names.js';
 import { WorkspaceConnector, type RemotePrompt, type RemoteTool } from './connector.js';
+import { teamLine, teamWorkspace } from '../cloud/team-file.js';
 import { KeptListing, within } from './kept-listing.js';
 
 /**
@@ -39,11 +40,12 @@ const TOOL_COMMAND: Record<string, string> = {
 const WORKSPACE_WAIT_MS = 4000;
 
 /** What the workspace-only server says when this machine isn't paired (any more). */
-const NOT_CONNECTED_LINE = 'Not connected to a Trail workspace: run `trail init --connect <code>` with the code from team.trailhq.com to use its learnings and skills here.';
+const NOT_CONNECTED_LINE = "This laptop isn't signed in to Trail, so your workspace's learnings and skills aren't here. Run `trail login` and give the user the link it prints: one click in their browser signs this laptop in.";
+
 
 /** Said when paired but the workspace said no: a refused token, or a Trail without this connector. */
 const REFUSED_LINE =
-  "Your Trail workspace refused this machine's token, or is an older version without this connector, so its learnings and skills aren't here. Run `trail init --connect <code>` with a new code from team.trailhq.com.";
+  "Your Trail workspace refused this laptop's sign-in, or is an older version without this connector, so its learnings and skills aren't here. Run `trail logout`, then `trail login`, and give the user the link it prints.";
 
 /** Said when paired but the workspace didn't answer in time. */
 const UNREACHABLE_LINE = "Your Trail workspace didn't answer when this session started, so its learnings and skills may be missing here.";
@@ -165,7 +167,8 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
             instructions: [...local, ...remote].filter(Boolean).join('\n\n'),
           });
         if (!paired) {
-          answer([brainsOnly ? NOT_CONNECTED_LINE : '']);
+          const team = brainsOnly ? null : teamWorkspace(root);
+          answer([brainsOnly ? NOT_CONNECTED_LINE : team ? teamLine(team.name, team.workspace) : '']);
           return;
         }
         within(workspace.instructions(), deadline - Date.now(), '').then(({ value }) =>

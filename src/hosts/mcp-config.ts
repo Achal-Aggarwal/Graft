@@ -143,7 +143,7 @@ export function stripTomlSection(text: string, name: Brand = 'graft'): { rest: s
  * and re-append instead, so this converges like every other writer — foreign
  * tables are untouched either way.
  */
-function upsertCodexToml(id: string, path: string, name: Brand = 'graft'): McpWrite {
+export function upsertCodexToml(id: string, path: string, name: Brand = 'graft'): McpWrite {
   const existed = existsSync(path);
   const text = existed ? readFileSync(path, 'utf8') : '';
   const { command, args } = serverEntry({ brand: name });

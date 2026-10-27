@@ -38,6 +38,7 @@ import { matter } from "../util/front-matter.js";
 import { appendPrivateFile, ensurePrivateDir, PRIVATE_FILE_MODE, writePrivateFile } from "../util/private-file.js";
 import { cacheDir, readJson, writeJsonAtomic } from "../util/state.js";
 import { headLearnings } from "./head-learnings.js";
+import { writeTeamFile } from "./team-file.js";
 import { isError, postActivity, readCloud, uploadLearnings, type ActivityEvent, type ApiError, type Cloud, type SkillFileUpload, type UploadedLearning } from "./workspace.js";
 
 /** A failed sync is retried after this long, not on every command. */
@@ -375,6 +376,8 @@ export async function syncRepo(
   else if (learnings) {
     writeJsonAtomic(statePath(place.checkout), { fingerprint: fingerprint(learnings), at: Date.now(), learnings: res.learnings, paths, branch }, true);
     rememberSent(place.key, learnings);
+    // Teammates who pull it are offered the sign-in to this workspace.
+    writeTeamFile(place.checkout, cloud);
   }
   return res;
 }

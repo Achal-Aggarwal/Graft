@@ -16,7 +16,8 @@ import { join } from "node:path";
 import { BRAND_ENV } from "../src/brand.js";
 import { rememberRepo } from "../src/notes/home.js";
 import { writeNote } from "../src/notes/notes.js";
-import { cloudLines, loginLink, NUDGE_WORDS, waitForConnect } from "../src/cloud/nudge.js";
+import { cloudLines, loginLines, loginLink, NUDGE_WORDS, waitForConnect } from "../src/cloud/nudge.js";
+import { readTeamFile, teamWorkspace, writeTeamFile } from "../src/cloud/team-file.js";
 import { readCloud, writeCloud, type Cloud } from "../src/cloud/workspace.js";
 import { tmpRepo } from "./helpers.js";
 
@@ -227,6 +228,30 @@ test("a login link for another Trail is a new link: a state registered with one 
   assert.match(second, /^https:\/\/trail\.acme\.example\.com\/connect\?state=/);
   assert.notEqual(new URL(first).searchParams.get("state"), new URL(second).searchParams.get("state"));
   assert.equal(loginLink(dir, env, Date.now(), "https://trail.acme.example.com"), second, "the same Trail again: the same link");
+});
+
+test("trail login --workspace: the page opens on that workspace, and an agent gets the link to show", () => {
+  freshHome();
+  const { dir } = repo();
+  const env = { ...process.env, TRAIL_TEST_SERVER: undefined };
+  const url = loginLink(dir, env, Date.now(), undefined, "acme");
+  assert.match(url, /^https:\/\/team\.trailhq\.com\/connect\?state=[\w-]{32}&ws=acme$/);
+  const out = loginLines(url, "acme").join("\n");
+  assert.ok(out.includes(`[Sign in to Trail](${url})`), out);
+  assert.match(out, /doesn't wait/);
+});
+
+test(".trail/workspace.json: written once the repo is in a workspace, trusted only for the Trail this laptop signs in to", () => {
+  freshHome();
+  const { dir } = repo();
+  const ws = { id: "w1", name: "Acme", slug: "acme", url: "https://team.trailhq.com/w/acme", invite_url: "" };
+  assert.equal(writeTeamFile(dir, { url: "https://team.trailhq.com", workspace: ws }), true);
+  assert.equal(writeTeamFile(dir, { url: "https://team.trailhq.com", workspace: ws }), false, "nothing changed, nothing written");
+  assert.deepEqual(readTeamFile(dir), { trail: "https://team.trailhq.com", workspace: "acme", name: "Acme" });
+  const env = { ...process.env, TRAIL_TEST_SERVER: undefined };
+  assert.equal(teamWorkspace(dir, env)?.workspace, "acme");
+  writeTeamFile(dir, { url: "https://trail.evil.example", workspace: ws });
+  assert.equal(teamWorkspace(dir, env), null, "another Trail named in a repo is never where a laptop signs in");
 });
 
 function connect(repos: string[]): void {

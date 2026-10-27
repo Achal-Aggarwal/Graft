@@ -1,8 +1,8 @@
 /**
  * The workspace connector, passed through the local trail MCP server.
  *
- * Once this machine is paired with a Trail workspace (`trail init --connect`,
- * or `trail login`), the `trail` MCP entry Claude Code already has also
+ * Once this machine is signed in to a Trail workspace (`trail login`, or
+ * `trail init --connect`), the `trail` MCP entry Claude Code already has also
  * serves everything the workspace's own MCP server serves to the Claude.ai
  * connector: its tools (get_context, save_learning, use_skill, ...), one
  * prompt per team skill, and the `instructions` that say what the team's
@@ -67,8 +67,8 @@ const PROTOCOL = '2025-06-18';
 /** At most this many pages of a listing, against a server that never stops paging. */
 const MAX_PAGES = 20;
 
-const NOT_CONNECTED = 'not connected to a Trail workspace · run `trail init --connect <code>` with the code from team.trailhq.com';
-const TOKEN_REFUSED = "your Trail workspace refused this machine's token; run `trail init --connect <code>` with a new code from team.trailhq.com";
+const NOT_CONNECTED = "this laptop isn't signed in to Trail · run `trail login` and give the user the link it prints";
+const TOKEN_REFUSED = "your Trail workspace refused this laptop's sign-in; run `trail logout`, then `trail login`, and give the user the link it prints";
 const NO_CONNECTOR = "your Trail doesn't serve this connector (an older version); its learnings and skills will show here once it does";
 
 /** How long calls fail at once after a start that failed, before one tries again. */

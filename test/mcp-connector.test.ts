@@ -8,6 +8,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { WorkspaceConnector, connectorUrl } from "../src/mcp/connector.js";
 import { WORKSPACE_INSTRUCTIONS, WORKSPACE_TOKEN } from "./fake-workspace-mcp.js";
 import {
@@ -129,7 +131,7 @@ test("a token the workspace won't take says how to reconnect", async () => {
   const { rs } = await rpc([INIT, INITIALIZED, LIST, CLOUD_CALL], dir, envWith(cloudFor(ws.url, "trl_revoked")), 3);
   const call = byId(rs, 3).result;
   assert.equal(call.isError, true);
-  assert.match(call.content[0].text, /refused this machine's token; run `trail init --connect <code>`/);
+  assert.match(call.content[0].text, /refused this laptop's sign-in; run `trail logout`, then `trail login`/);
 });
 
 test("not paired: the repo tools as before, nothing of the workspace's", async () => {
@@ -142,6 +144,18 @@ test("not paired: the repo tools as before, nothing of the workspace's", async (
   assert.ok(names.includes("trail_find_code"));
   for (const n of [...CLOUD_TOOLS, "list_brains", "search_rules", "get_rules"]) assert.ok(!names.includes(n));
   assert.equal(byId(rs, 3).result.isError, true);
+});
+
+test("not signed in, in a repo whose team uses Trail: one line offers the sign-in to that workspace", async () => {
+  const dir = await builtRepo();
+  mkdirSync(join(dir, ".trail"), { recursive: true });
+  writeFileSync(join(dir, ".trail", "workspace.json"), JSON.stringify({ trail: "https://team.trailhq.com", workspace: "acme", name: "Acme" }));
+  const { rs } = await rpc([INIT, INITIALIZED, LIST], dir, envWith(null), 2);
+  assert.match(byId(rs, 1).result.instructions, /workspace Acme .* run `(trail|npx -y @trailhq\/trail-code@latest) login --workspace acme`/);
+  // Another Trail named in the repo is never where a laptop is sent to sign in.
+  writeFileSync(join(dir, ".trail", "workspace.json"), JSON.stringify({ trail: "https://trail.evil.example", workspace: "acme", name: "Acme" }));
+  const other = await rpc([INIT, INITIALIZED, LIST], dir, envWith(null), 2);
+  assert.doesNotMatch(byId(other.rs, 1).result.instructions, /login --workspace/);
 });
 
 test("trail mcp --brains, Claude Code's user-level entry: the workspace's tools, prompts and instructions, nothing of the repo's", async () => {
@@ -158,7 +172,7 @@ test("trail mcp --brains, Claude Code's user-level entry: the workspace's tools,
 
   const off = await rpc([INIT, INITIALIZED, LIST], dir, envWith(null), 2, ["--brains"]);
   assert.deepEqual(byId(off.rs, 2).result.tools, []);
-  assert.match(byId(off.rs, 1).result.instructions, /Not connected to a Trail workspace: run `trail init --connect <code>`/);
+  assert.match(byId(off.rs, 1).result.instructions, /isn't signed in to Trail.*Run `trail login`/);
 });
 
 test("a workspace that keeps sessions: the id goes back on every request, and a dropped session starts again once", async () => {
@@ -189,7 +203,7 @@ test("the connector never throws, paired or not", async () => {
   assert.equal(await off.instructions(), "");
   const r = await off.callTool("get_context", { query: "x" });
   assert.equal(r.isError, true);
-  assert.match(r.content[0]!.text, /not connected to a Trail workspace/);
+  assert.match(r.content[0]!.text, /isn't signed in to Trail/);
   const p = await off.getPrompt("release-to-npm", {});
   assert.ok("error" in p);
 });

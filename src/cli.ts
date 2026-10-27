@@ -51,7 +51,8 @@ import { planInit, selectedWrites } from "./hosts/plan.js";
 import { planRetract, runRetract, changed, type Retraction } from "./hosts/retract.js";
 import { compactWrites, formatNonInteractiveHelp, formatPlan, runPicker } from "./cli-picker.js";
 import { buildGraphWithProgress } from "./claude/build-progress.js";
-import { installBrainsServer, removeBrainsServer } from "./hosts/claude-global.js";
+import { installBrainsServer, installCursorBrainsServer, removeBrainsServer, removeCursorBrainsServer } from "./hosts/claude-global.js";
+import { upsertCodexToml } from "./hosts/mcp-config.js";
 import { homedir } from "node:os";
 import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, readPackageName, runUpgrade } from "./cli-meta.js";
 import { nativeFallbackNotice } from "./graph/native.js";
@@ -71,8 +72,9 @@ import { listSkills } from "./skills/skills.js";
 import { registerSkillCommands } from "./skills/cli-skills.js";
 import { gateNote, namesRepoSymbol, symbolCandidates, trackedFiles } from "./notes/note-gate.js";
 import { recordLookup } from "./cloud/lookup-activity.js";
-import { clearPending, cloudLines, loginLink, sessionKey, WAIT_MS, waitForConnect } from "./cloud/nudge.js";
-import { addRepo, clearCloud, cloudEnabled, failPair, fetchMe, fetchTeam, isError, readCloud, serverUrl, trailUrl, useServer, writeCloud, type Cloud, type SetupFailure } from "./cloud/workspace.js";
+import { clearPending, cloudLines, loginLines, loginLink, sessionKey, startWaiting, WAIT_MS, waitForConnect } from "./cloud/nudge.js";
+import { teamWorkspace } from "./cloud/team-file.js";
+import { addRepo, claimLoginCode, clearCloud, cloudEnabled, failPair, fetchMe, fetchTeam, isError, readCloud, serverUrl, trailUrl, useServer, writeCloud, type Cloud, type SetupFailure } from "./cloud/workspace.js";
 import {
   claimConnectCode,
   connectAgain,
@@ -86,7 +88,7 @@ import {
   teammatesFromGit,
   tokensOnOneLookup,
 } from "./cloud/onboarding.js";
-import { inWorkspace, maybeSyncInBackground, recordActivity, runSyncChild, syncRepo, workspaceLearnings } from "./cloud/workspace-sync.js";
+import { dropActivity, inWorkspace, maybeSyncInBackground, recordActivity, runSyncChild, syncRepo, syncWorkspaceRepos, workspaceLearnings } from "./cloud/workspace-sync.js";
 import type { CheckResult } from "./check/types.js";
 import { checkLocally } from "./check/local-check.js";
 import { findLearning, learningFileName, liveLearnings } from "./notes/learning-fields.js";
@@ -363,7 +365,8 @@ program
   .command("_trail-claim", { hidden: true })
   .description("internal: wait for a sign-in through the link trail handed the agent, then connect the workspace")
   .action(async () => {
-    await waitForConnect();
+    const got = await waitForConnect();
+    if (got && "cloud" in got) addAgentEntries();
   });
 
 program
@@ -2195,18 +2198,26 @@ grouped(program.command("uninstall"), GROUP.setup)
 /* -------------------------------------------------------------------------- */
 
 /**
- * `trail login`: connect this machine to a Trail workspace by hand. Normally
- * nobody runs it: Claude offers the same link once there's a learning to
- * share. Prints the link, opens it, and waits for the person to sign in and
- * add the repo they're in, then uploads its committed learnings. Other repos
- * are added one at a time afterwards (`trail workspace add`).
+ * `trail login`: sign this laptop in to a Trail workspace through the
+ * browser. No code to copy: the link carries a fresh state, the person signs
+ * in and allows it there, and this laptop claims its own token. In a
+ * terminal it opens the browser and waits. Run by an agent, it prints the
+ * link for the agent's reply and leaves a background wait to finish it, so
+ * the agent never sits blocked. `--workspace` (or the repo's
+ * `.trail/workspace.json`) picks the workspace on that page.
+ *
+ * `--code` skips the browser: Trail's web app made the one-time code for the
+ * person already signed in there, so the laptop trades it for its token
+ * straight away.
  */
 function loginCommand(name = "login"): Command {
   return new Command(name)
-    .description("Connect this machine to a Trail workspace: sign in, add this repo, invite your team")
+    .description("Sign this laptop in to your Trail workspace, in the browser: every coding agent here gets its brand, skills and learnings")
     .argument("[dir]", "the repo to add", ".")
+    .option("--code <code>", "a one-time sign-in code from Trail's web app (TRL-…): signs in with no browser step")
+    .option("--workspace <slug>", "the workspace to sign in to, as its page names it (default: this repo's, if it has one)")
     .option("--server <url>", "a self-hosted Trail, e.g. https://trail.acme.internal (default: Trail cloud, https://team.trailhq.com)")
-    .action(async (dir: string, opts: { server?: string }) => {
+    .action(async (dir: string, opts: { server?: string; workspace?: string; code?: string }) => {
       const repo = resolve(dir);
       // Saved on the link, so its sign-in and every upload after go there; nothing in the environment.
       const server = opts.server === undefined ? undefined : serverUrl(opts.server);
@@ -2215,23 +2226,90 @@ function loginCommand(name = "login"): Command {
         process.exitCode = 1;
         return;
       }
+      if (opts.code !== undefined) {
+        await loginWithCode(repo, opts.code, server ?? trailUrl());
+        return;
+      }
+      const slug = opts.workspace?.trim().toLowerCase() || (server ? undefined : teamWorkspace(repo)?.workspace);
       const cloud = readCloud();
       if (cloud) {
-        console.error(`✓ already connected to workspace ${cloud.workspace.name} · ${cloud.workspace.url}`);
+        if (slug && slug !== cloud.workspace.slug) {
+          console.error(`✗ this laptop is signed in to workspace ${cloud.workspace.name} · run ${cmd("graft logout")}, then ${cmd("graft login")} --workspace ${slug}`);
+          process.exitCode = 1;
+          return;
+        }
+        addAgentEntries();
+        console.error(`✓ already signed in to workspace ${cloud.workspace.name} · ${cloud.workspace.url}`);
         return;
       }
       rememberRepo(repo);
-      const url = loginLink(repo, process.env, Date.now(), server);
-      console.error(`· sign in and add this repo to your workspace:\n  ${url}`);
-      if (process.stdout.isTTY) openBrowser(url);
-      console.error("· waiting for you to finish in the browser (ctrl-c stops; Claude picks it up later too)");
+      const url = loginLink(repo, process.env, Date.now(), server, slug);
+      if (!process.stdout.isTTY) {
+        printLines(loginLines(url, slug));
+        startWaiting();
+        return;
+      }
+      console.error(`· sign in and allow this laptop:\n  ${url}`);
+      openBrowser(url);
+      console.error("· waiting for you to finish in the browser (ctrl-c stops; the next trail command picks it up too)");
       const got = await waitForConnect({ waitMs: 10 * 60 * 1000 });
-      if (got && "cloud" in got) printLines(cloudLines(repo, { command: "note", agent: false }));
-      else if (got && "error" in got) {
+      if (got && "cloud" in got) {
+        addAgentEntries();
+        printLines(cloudLines(repo, { command: "note", agent: false }));
+      } else if (got && "error" in got) {
         console.error(`✗ ${got.error} · run ${cmd("graft login")} again for a new link`);
         process.exitCode = 1;
-      } else console.error(`· not connected yet · the link stays good for a day`);
+      } else console.error(`· not signed in yet · the link stays good for a day`);
     });
+}
+
+/** `trail login --code`: trade the web app's one-time code for this laptop's token, then set up its agents. */
+async function loginWithCode(repo: string, code: string, base: string): Promise<void> {
+  const before = readCloud();
+  const got = await claimLoginCode(base, code.trim());
+  if ("error" in got) {
+    console.error(`✗ ${got.error}`);
+    process.exitCode = 1;
+    return;
+  }
+  const cloud: Cloud = { ...got.cloud, url: base, linkedAt: Date.now() };
+  if (before && (before.workspace.slug !== cloud.workspace.slug || before.url !== base)) {
+    console.error(`· this laptop was signed in to workspace ${before.workspace.name}; it's now ${cloud.workspace.name}`);
+  }
+  // Nothing recorded before signing in goes up.
+  if (!before) dropActivity();
+  writeCloud(cloud);
+  // A sign-in link out from before is moot now.
+  clearPending();
+  rememberRepo(repo);
+  addAgentEntries();
+  const sent = await syncWorkspaceRepos(cloud).catch(() => ({ repos: 0, learnings: 0 }));
+  console.log(`✓ this laptop is signed in to Trail workspace ${cloud.workspace.name} · ${cloud.workspace.url}`);
+  if (sent.repos) console.log(`✓ shared ${sent.learnings} learning${sent.learnings === 1 ? "" : "s"} from ${sent.repos} repo${sent.repos === 1 ? "" : "s"}`);
+  if (!process.stdout.isTTY) {
+    console.log(
+      `[${brand()}] Tell the user, in one line, that this laptop is signed in to their Trail workspace ${cloud.workspace.name}: Claude Code, Codex and Cursor here have its brand, skills and learnings from their next session. Don't repeat the code.`,
+    );
+  }
+}
+
+/**
+ * Once this laptop is signed in, every coding agent installed on it gets the
+ * workspace's tools in every project, with nothing more to run: Claude Code
+ * and Cursor through a user-level workspace-only `trail` server, Codex
+ * through its user-level `trail` server (the one `trail init` writes, which
+ * passes the workspace through once signed in). Only for agents installed
+ * here. Best effort.
+ */
+function addAgentEntries(): void {
+  const home = homedir();
+  try {
+    if (existsSync(join(home, ".claude.json")) || existsSync(join(home, ".claude"))) installBrainsServer(home);
+    if (existsSync(join(home, ".cursor"))) installCursorBrainsServer(home);
+    if (existsSync(join(home, ".codex"))) upsertCodexToml("codex", join(home, ".codex", "config.toml"), "trail");
+  } catch {
+    // a config that can't be written leaves that agent as it was
+  }
 }
 
 function logoutCommand(name = "logout"): Command {
@@ -2241,6 +2319,7 @@ function logoutCommand(name = "logout"): Command {
       const cloud = readCloud();
       clearPending();
       removeBrainsServer(homedir());
+      removeCursorBrainsServer(homedir());
       if (!clearCloud()) {
         console.error("· not connected to a workspace");
         return;
@@ -2663,7 +2742,9 @@ function statusCommand(name = "status"): Command {
 if (TRAIL) {
   for (const c of [teamCheckCommand(), teamCommand()]) program.addCommand(c.helpGroup(GROUP.memory));
   // Signing in waits until it gives a team more than committing .trail/ does.
-  for (const c of [workspaceCommand(), loginCommand(), logoutCommand()]) program.addCommand(c.helpGroup(GROUP.cloud), { hidden: !cloudEnabled() });
+  // Signing in is how every coding agent here gets the team's workspace: always listed.
+  program.addCommand(loginCommand().helpGroup(GROUP.cloud));
+  for (const c of [workspaceCommand(), logoutCommand()]) program.addCommand(c.helpGroup(GROUP.cloud), { hidden: !cloudEnabled() });
   program.addCommand(statusCommand().helpGroup(GROUP.setup));
 
   // Help lists the groups in this order, and the commands within each.
@@ -2692,7 +2773,7 @@ if (TRAIL) {
     check: "check your diff against this repo's learnings and yours",
     team: "what the team learned this week, and where work overlaps",
     workspace: "your workspace's repos, team page and invite link",
-    login: "connect a Trail workspace (Claude offers you the link)",
+    login: "sign this laptop in to your Trail workspace, in the browser",
     logout: "disconnect this machine from its workspace",
     blast: "what depends on the lines this diff touched",
   };

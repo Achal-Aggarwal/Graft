@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.27.0
+
+### Added
+
+- **Sign in from your coding agent, with no browser step.** Trail's page
+  copies a prompt with a one-time code; your agent runs
+  `trail login --code TRL-…` and the laptop is signed in. The code works
+  once and for 15 minutes.
+- **One sign-in sets up every agent.** Once a laptop is signed in, Claude
+  Code, Codex and Cursor on it all get the workspace's brand, skills and
+  learnings in every project, with nothing more to run.
+- **`trail login` works when an agent runs it.** It prints the sign-in link
+  for the agent to show and finishes in the background instead of waiting.
+  `--workspace <name>` opens the sign-in page on that workspace.
+- **Teammates are offered the sign-in.** A signed-in laptop writes
+  `.trail/workspace.json` when it shares a repo. A teammate who pulls it and
+  isn't signed in gets one offer from their agent to sign in to the same
+  workspace.
+- **Setup learns from your past work.** Setup now learns from your past
+  Claude Code sessions and your team's pull requests, with titles a teammate
+  can read (#701).
+- **Learnings show up as they're found.** Each learning shows up the moment
+  it's found, in the terminal and on Trail's page (#703).
+- **The code map builds itself.** The first `trail` query in a repo without
+  a code map builds one (#704).
+
+### Changed
+
+- Messages about a laptop that isn't signed in now say `trail login`.
+
 ## 0.26.0
 
 ### Added

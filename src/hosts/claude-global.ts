@@ -254,3 +254,24 @@ export function installBrainsServer(home: string): GlobalWrite {
 export function removeBrainsServer(home: string): GlobalWrite {
   return dropUserServer('claude-global-brains', join(home, '.claude.json'), 'trail', (e) => !isBrainsServer(e));
 }
+
+/**
+ * The same workspace-only server for Cursor, in its user-level
+ * `~/.cursor/mcp.json`, so every project opened in Cursor has the workspace's
+ * tools. A repo's own `.cursor/mcp.json` entry (from `trail init`) wins there.
+ */
+export function installCursorBrainsServer(home: string): GlobalWrite {
+  const id = 'cursor-global-brains';
+  const path = join(home, '.cursor', 'mcp.json');
+  try {
+    const { command, args } = serverEntry({ brand: 'trail' });
+    return mergeJsonKey(id, path, 'mcpServers', { command, args: [...args, BRAINS_FLAG] }, 'trail');
+  } catch {
+    return { id, path, action: 'skipped-unparseable' };
+  }
+}
+
+/** Take Cursor's workspace server out again (`trail logout`). */
+export function removeCursorBrainsServer(home: string): GlobalWrite {
+  return dropUserServer('cursor-global-brains', join(home, '.cursor', 'mcp.json'), 'trail', (e) => !isBrainsServer(e));
+}

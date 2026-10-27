@@ -39,6 +39,7 @@ import { hostFacts } from '../skills/host-facts.js';
 import { trailNow } from '../skills/settings.js';
 import { recordSkillUse, skillOfToolUse } from './skill-use.js';
 import { keptContext, keptNotice } from './start-init.js';
+import { teamSignInLine } from '../cloud/team-file.js';
 
 export { lastFileScopeHint, promptAskTimeout } from './prompt-hook.js';
 
@@ -521,7 +522,9 @@ export async function main(event: string): Promise<void> {
     const text = orientationAtStart(dir, learningsAtStart(dir));
     const kept = keptAtStart(input, dir);
     // The skills context comes after the learnings; its notice is for the person.
-    const out = [upkeep.join('\n'), text, skills.context, kept.context].filter(Boolean).join('\n\n');
+    // A repo whose team uses a Trail workspace, on a laptop not signed in to it: offered once a session.
+    const team = teamSignInLine(dir);
+    const out = [upkeep.join('\n'), text, team, skills.context, kept.context].filter(Boolean).join('\n\n');
     const notice = [skills.notice, kept.notice].filter(Boolean).join('\n') || undefined;
     emitHook('SessionStart', { context: out, notice });
     return;

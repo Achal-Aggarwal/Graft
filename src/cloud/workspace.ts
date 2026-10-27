@@ -271,6 +271,30 @@ export async function claimHandoff(base: string, state: string, fetchImpl?: Fetc
   return { pending: true };
 }
 
+/**
+ * Trade a one-time sign-in code, made for this person on Trail's web app, for
+ * this laptop's token. No browser step: the code already says who and which
+ * workspace. A code that's used or past its minutes is refused for good.
+ */
+export async function claimLoginCode(base: string, code: string, fetchImpl?: Fetch): Promise<Exclude<ClaimResult, { pending: true }> | { error: string; reason: "offline" | "invalid" }> {
+  const r = await call<{ token?: string; user?: Cloud["user"]; workspace?: WorkspaceInfo; repos?: string[] }>(
+    base,
+    "POST",
+    "/api/cli/login-codes/claim",
+    { code },
+    { fetchImpl, timeoutMs: 15_000 },
+  );
+  if (isError(r)) {
+    if (r.status === 410) return { error: "that sign-in code was already used or has expired · copy a new one from the Trail page", reason: "expired" };
+    if (r.status === 400) return { error: "that isn't a Trail sign-in code · they look like TRL-ABCD-EFGH-IJKL-MNOP", reason: "invalid" };
+    if (r.status === 404 || r.status === 405) return { error: "this Trail doesn't take sign-in codes yet", reason: "unsupported" };
+    return { error: `couldn't reach Trail (${r.error})`, reason: "offline" };
+  }
+  const b = r.body;
+  if (b?.token && b.workspace?.slug) return { cloud: { token: b.token, user: b.user ?? { name: "", email: "" }, workspace: b.workspace, repos: b.repos ?? [] } };
+  return { error: "Trail sent an answer trail couldn't read", reason: "offline" };
+}
+
 /* the workspace ------------------------------------------------------------- */
 
 export interface WorkspaceRepo {

@@ -125,9 +125,10 @@ export function newState(): string {
   return randomBytes(24).toString("base64url");
 }
 
-/** The page the link opens, on the Trail `server`. */
-export function connectUrl(state: string, server: string): string {
-  return `${server}/connect?state=${encodeURIComponent(state)}`;
+/** The page the link opens, on the Trail `server`; `workspace` is picked there for the person. */
+export function connectUrl(state: string, server: string, workspace?: string): string {
+  const ws = workspace ? `&ws=${encodeURIComponent(workspace)}` : "";
+  return `${server}/connect?state=${encodeURIComponent(state)}${ws}`;
 }
 
 /** The Trail a link is for. A link an older trail made names none: Trail cloud. */
@@ -412,13 +413,27 @@ export async function waitForConnect(opts: WaitOptions = {}): Promise<ClaimResul
  * on the link; without it, Trail cloud. Recorded like a nudge, so the
  * background wait and the agent agree on it, and on where it goes.
  */
-export function loginLink(repo: string, env: NodeJS.ProcessEnv = process.env, now = Date.now(), server?: string): string {
+export function loginLink(repo: string, env: NodeJS.ProcessEnv = process.env, now = Date.now(), server?: string, workspace?: string): string {
   const want = server ?? trailUrl(env);
   const live = livePending(readState(env), now);
   // A state registered with one Trail is never handed to another.
   const link = live && linkServer(live, env) === want ? live : { state: newState(), createdAt: now, repo: repoPlace(repo, env).key, server: want };
   writeState({ pending: link }, env);
-  return connectUrl(link.state, want);
+  return connectUrl(link.state, want, workspace);
+}
+
+/**
+ * `trail login` run by an agent: no browser to open and nobody at the
+ * terminal, so the link goes in the agent's reply and a background wait
+ * picks up the sign-in. The agent's next call to a workspace tool works.
+ */
+export function loginLines(url: string, workspace?: string): string[] {
+  const where = workspace ? ` to ${workspace}` : "";
+  return [
+    `· sign in${where}: ${url}`,
+    `[${brand()}] Give the user this link to click, word for word, and tell them it signs this laptop in to Trail${where} in one step in their browser: [Sign in to Trail](${url})`,
+    `  This command doesn't wait: once they've signed in, the workspace's tools work here (a new session lists them). Don't run ${brand()} login again unless they ask for a new link.`,
+  ];
 }
 
 /** Forget a link that's out, and any news not yet told. For `trail logout`. */
