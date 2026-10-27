@@ -149,7 +149,7 @@ export const VALUES: Record<string, Record<string, ReadonlySet<string>>> = {
     had_lesson: new Set(['true', 'false']),
   },
   hook_ms: {
-    event: new Set(['session-start', 'prompt', 'pre-bash', 'tool-savings', 'post-bash', 'post-bash-fail', 'post-edit', 'post-edit-sync', 'stop']),
+    event: new Set(['session-start', 'prompt', 'pre-bash', 'pre-edit', 'tool-savings', 'post-bash', 'post-bash-fail', 'post-edit', 'post-edit-sync', 'stop']),
     bucket: new Set(HOOK_MS_BUCKETS),
   },
 };

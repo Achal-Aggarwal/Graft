@@ -24,7 +24,7 @@ import { newState, pairSettled, PAIR_WAIT_MS, rememberPair } from "./nudge.js";
 import type { TeammateSummary, TokensSummary } from "./onboarding.js";
 import { dropActivity, reviewPayload, syncRepo } from "./workspace-sync.js";
 import { machinePayload, otherRepos, setUpPicked, type OtherRepo } from "./other-repos.js";
-import { claimHandoff, fetchMe, isError, postHandoffProgress, readCloud, registerHandoff, sendMachineRepos, trailUrl, writeCloud, type Cloud, type SetupFailure } from "./workspace.js";
+import { claimHandoff, cloudForRepo, fetchMe, isError, postHandoffProgress, readCloud, readClouds, registerHandoff, sendMachineRepos, trailUrl, writeCloud, type Cloud, type SetupFailure } from "./workspace.js";
 
 /** A pair code as the onboarding page prints it: letters and digits. */
 export function validPairCode(code: string): boolean {
@@ -297,7 +297,7 @@ export async function finishPair(state: string, repo: string, opts: FinishOption
   else if (outcome !== "uploaded" || !opts.resumed) pairSettled(state, "over", undefined, undefined, now);
   else {
     // Nobody was watching this one connect: the next command says so.
-    const cloud = readCloud();
+    const cloud = cloudForRepo(repoPlace(repo).key) ?? readCloud();
     pairSettled(state, "linked", cloud ? { workspace: cloud.workspace.name, url: cloud.workspace.url, repos: cloud.repos.length, learnings } : undefined, undefined, now);
   }
   return outcome;
@@ -317,8 +317,9 @@ async function waitAndUpload(state: string, repo: string, opts: FinishOptions): 
     const got = await claimHandoff(base, state, opts.fetchImpl);
     if ("cloud" in got) {
       cloud = { ...got.cloud, url: base, linkedAt: now() };
-      // Like any first connect: nothing recorded before it goes up.
-      dropActivity();
+      // Like any first connect: nothing recorded before it goes up. A later
+      // one keeps what the workspaces already here have waiting.
+      if (!readClouds().length) dropActivity();
       writeCloud(cloud);
       break;
     }

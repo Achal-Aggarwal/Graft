@@ -38,6 +38,9 @@ const DECISIONS = new Set(['allow', 'ask', 'deny']);
  * The decision for one Bash call, or null to let it run untouched. Phase 0:
  * always null. Never throws.
  */
+/** A commit, a push or a PR: the commands `trail check` runs before (pre-bash-check.ts). One regex for every other command. */
+export const SHIP_COMMAND = /\b(?:git\s+(?:commit|push)|gh\s+pr\s+create)\b/;
+
 export function preBash(_input: unknown, _dir: string): PreBashDecision | null {
   return null;
 }
@@ -247,6 +250,14 @@ export async function main(event = 'pre-bash', decide: (input: unknown, dir: str
     // Registered in the repo and in ~/.claude, Claude Code runs both: one
     // answers. Copilot CLI runs only the repo's, so the payload decides first.
     const standsDown = async () => (await import('./hook-layers.js')).globalCopyCovers(event, process.argv[1], undefined, undefined, input);
+    if (SHIP_COMMAND.test(command)) {
+      // It writes (the session's checked mark), so only the copy that answers runs it.
+      if (await standsDown()) return;
+      const { shipCheck } = await import('./pre-bash-check.js');
+      const decision = shipCheck(input, dir, command);
+      const reply = preBashOutput(input, dir, () => decision);
+      if (reply) return void process.stdout.write(reply);
+    }
     if (skillsPrefilter(input, command)) {
       // The skills part writes (receipts, asked marks): only the copy that answers runs it.
       if (await standsDown()) return;

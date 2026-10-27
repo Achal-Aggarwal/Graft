@@ -17,9 +17,18 @@ description: Use for ANY task in this repo. What past sessions worked out, decid
 # trail
 
 ## When to reach for trail
-- **Before exploring code**, run `trail ask "<task>" --source`. Learnings
-  from past sessions, yours and your teammates', on what was decided, tried
-  and ruled out print above the code. Read them first.
+- **Before exploring code**, run `trail ask "<task>" --source`, even for a
+  plain "where is" or "how does this work" question, before you grep or open
+  files. Learnings from past sessions, yours and your teammates', on what was
+  decided, tried and ruled out print above the code. Read them first.
+- **When you start from a ticket, an issue or a bug report**, run
+  `trail ask` with its words before you plan, so you start from what was
+  already decided about that area.
+- **When a test or command fails while you debug**, run `trail ask` on that
+  area before you try a fix: a past session may have tried and ruled out the
+  fix you're about to try.
+- **Before you change a file**, trail puts the learnings on it in front of
+  you. Read them before you write the edit.
 - **When the session finds what the code can't tell the next person**, save a
   learning with `trail note`, and commit it with the change. What counts is
   under Saving a learning below.

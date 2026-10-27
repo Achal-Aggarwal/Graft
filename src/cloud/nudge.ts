@@ -13,8 +13,10 @@
  * Then it saves the connection, uploads that repo's committed learnings, and
  * leaves the news for the next trail command, which says so once.
  *
- * Connected, a repo with learnings that isn't in the workspace gets one
- * question, ever: add it?
+ * A machine can be in several workspaces. Signed in already, a repo with
+ * learnings that no workspace here has gets the same link, worded for linking:
+ * Trail opens signed in, and the person picks the workspace it goes to (one
+ * of theirs, a teammate's, or a new one).
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -27,7 +29,7 @@ import { durationBucket } from "../telemetry/contract.js";
 import { track } from "../telemetry/track.js";
 import { ensurePrivateDir } from "../util/private-file.js";
 import { readJson, writeJsonAtomic } from "../util/state.js";
-import { claimHandoff, readCloud, registerHandoff, SECRET_FILE_MODE, serverUrl, trailUrl, writeCloud, type ClaimResult, type HandoffRepo } from "./workspace.js";
+import { claimHandoff, cloudForRepo, cloudIn, readClouds, registerHandoff, SECRET_FILE_MODE, serverUrl, trailUrl, writeCloud, type ClaimResult, type HandoffRepo } from "./workspace.js";
 import { dropActivity, syncWorkspaceRepos } from "./workspace-sync.js";
 
 /** What the link says, in turn: one per session, so it never reads the same twice running. */
@@ -45,7 +47,8 @@ export const WAIT_MS = 20 * 60 * 1000;
 /** Without a session id, commands this close together count as one session. */
 export const SESSION_GAP_MS = 4 * 60 * 60 * 1000;
 
-export type NudgeCommand = "ask" | "note" | "check";
+/** What offered the link: a trail command, or a hook that just did trail's work for the person. */
+export type NudgeCommand = "ask" | "note" | "check" | "hook";
 
 interface Pending {
   /** The state in the link, which is what claims the connection. */
@@ -70,8 +73,6 @@ interface NudgeState {
   pending?: Pending;
   /** Connected by the background wait, and not yet told to the agent. */
   linked?: { workspace: string; url: string; repos: number; learnings: number };
-  /** Repos already asked about adding to the workspace, by key. */
-  asked?: Record<string, number>;
   /** A paired setup's connect not yet made: `_trail-pair` waits on it until `waitUntil`, then the next command waits again. */
   pair?: PendingPair;
 }
@@ -165,22 +166,21 @@ export function cloudLines(repo: string, opts: NudgeOptions): string[] {
     const agent = opts.agent ?? !process.stdout.isTTY;
     resumePair(env, now);
     const st = readState(env);
-    const cloud = readCloud(env);
-    if (!cloud && env.TRAIL_CLOUD !== "1") return [];
+    const clouds = readClouds(env);
+    if (!clouds.length && env.TRAIL_CLOUD !== "1") return [];
 
-    if (cloud) {
-      if (st.linked) {
-        writeState({ linked: undefined }, env);
-        return connectedLines(st.linked, agent);
-      }
-      // Connected from the onboarding: only summaries go up, so there's no repo to add.
-      if (cloud.via === "connect") return [];
-      return addRepoLines(repo, cloud.workspace.name, cloud.repos, st, agent, env, now);
+    if (st.linked) {
+      writeState({ linked: undefined }, env);
+      return connectedLines(st.linked, agent);
     }
 
     // A repo with no remote has no name a workspace could know it by.
     const place = repoPlace(repo, env);
     if (!place.git || place.key.startsWith("local/") || !keepsNotes(repo, env)) return [];
+    // Linked already: its learnings go to that workspace.
+    if (cloudIn(clouds, place.key)) return [];
+    // Connected from the onboarding only: those send summaries, never a repo's learnings.
+    if (clouds.length && clouds.every((c) => c.via === "connect")) return [];
     const startWait = opts.startWait ?? (() => startWaiting(env));
     // A link already out keeps being waited on, whether or not this command offers it.
     const pending = livePending(st, now);
@@ -191,15 +191,59 @@ export function cloudLines(repo: string, opts: NudgeOptions): string[] {
     const session = sessionKey(repo, env, now);
     if (offeredThisSession(st, session, now)) return [];
 
-    const link = pending ?? { state: newState(), createdAt: now, repo: place.key, server: trailUrl(env) };
+    // One link per repo: one made in another repo would connect that one.
+    const link = pending && (pending.repo ?? place.key) === place.key ? pending : { state: newState(), createdAt: now, repo: place.key, server: trailUrl(env) };
     const shown = st.shown ?? 0;
     const i = shown % NUDGE_WORDS.length;
     writeState({ session: session ?? undefined, at: now, shown: shown + 1, pending: link }, env);
     startWait();
-    track("brain_signup_opened", { mode: "nudge", command: opts.command, wording: WORDING_IDS[i] }, { repo });
-    return nudgeLines(NUDGE_WORDS[i], connectUrl(link.state, linkServer(link, env)), agent);
+    const signedIn = clouds.length > 0;
+    track("brain_signup_opened", { mode: "nudge", command: opts.command, wording: signedIn ? "link" : WORDING_IDS[i] }, { repo });
+    const url = connectUrl(link.state, linkServer(link, env));
+    if (signedIn) return linkLines(repoName(place.key, place.checkout), url, agent);
+    return nudgeLines(NUDGE_WORDS[i], url, agent);
   } catch {
     return [];
+  }
+}
+
+/**
+ * The same offer, as a hook's notice for the person, at a moment a trail hook
+ * just did something for them (`why`: a teammate's learning put in front of
+ * the agent). It doesn't wait for the agent to run a trail command, which it
+ * often doesn't. Once a session, on cloudLines' rules, with the session told
+ * apart by the hook's payload; the news that this machine just connected goes
+ * the same way. Null when there's nothing to say. Never throws.
+ */
+export function hookNotice(repo: string, why: string, opts: { session?: string; env?: NodeJS.ProcessEnv; now?: number; startWait?: () => void } = {}): string | null {
+  try {
+    const env = opts.env ?? process.env;
+    const lines = cloudLines(repo, {
+      command: "hook",
+      agent: false,
+      env: opts.session ? { ...env, CLAUDE_CODE_SESSION_ID: opts.session } : env,
+      now: opts.now,
+      startWait: opts.startWait,
+    });
+    if (!lines.length) return null;
+    // The connected news says what happened already; the offer gets why it comes now.
+    if (lines[0]!.startsWith("✓")) return lines.join("\n");
+    return `${brand()} · ${why} · ${lines[0]!.replace(/^· /, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The news that this machine just connected, once, for the person: on the next prompt rather than the next trail command. */
+export function linkedNews(env: NodeJS.ProcessEnv = process.env): string | null {
+  try {
+    if (brand() !== "trail") return null;
+    const st = readState(env);
+    if (!st.linked) return null;
+    writeState({ linked: undefined }, env);
+    return connectedLines(st.linked, false).join("\n");
+  } catch {
+    return null;
   }
 }
 
@@ -225,16 +269,13 @@ function connectedLines(l: NonNullable<NudgeState["linked"]>, agent: boolean): s
   return lines;
 }
 
-/** The one question about a repo that has learnings and isn't in the workspace. */
-function addRepoLines(repo: string, workspace: string, repos: string[], st: NudgeState, agent: boolean, env: NodeJS.ProcessEnv, now: number): string[] {
-  const place = repoPlace(repo, env);
-  if (!place.git || place.key.startsWith("local/") || repos.includes(place.key) || st.asked?.[place.key]) return [];
-  if (noteCount(repo, env) === 0) return [];
-  writeState({ asked: { ...(st.asked ?? {}), [place.key]: now } }, env);
-  const name = repoName(place.key, place.checkout);
-  if (!agent) return [`· ${name} isn't in workspace ${workspace} yet · ${brand()} workspace add shares its learnings with your team`];
+/** The link for a repo no workspace on this machine has, when already signed in. */
+export function linkLines(name: string, url: string, agent: boolean): string[] {
+  const words = `Pick a Trail workspace for ${name}`;
+  if (!agent) return [`· ${name} isn't in any of your Trail workspaces · pick one: ${url}`];
   return [
-    `[${brand()}] Ask the user once, at the end of your reply: add ${name} to their Trail workspace ${workspace}, so their team sees what's learned here? If they say yes, run \`${brand()} workspace add\`. Don't ask again.`,
+    `[${brand()}] End your reply with this line, word for word: [${words}](${url})`,
+    `  This repo's learnings aren't going to any Trail workspace yet. The link opens Trail signed in, to pick where they go: one of the user's workspaces, a teammate's, or a new one. Offer it; don't run ${brand()} login yourself.`,
   ];
 }
 
@@ -278,7 +319,7 @@ export function resumePair(env: NodeJS.ProcessEnv = process.env, now = Date.now(
   try {
     const p = readState(env).pair;
     if (!p) return;
-    if (now - p.createdAt >= LINK_TTL_MS || readCloud(env)) {
+    if (now - p.createdAt >= LINK_TTL_MS || cloudForRepo(repoPlace(p.repo, env).key, env)) {
       writeState({ pair: undefined }, env);
       return;
     }
@@ -322,8 +363,8 @@ export function startWaiting(env: NodeJS.ProcessEnv = process.env, now = Date.no
  * What the picker may list before anyone has opened the link: the one repo it
  * was offered in, with how many learnings it has here. Never this machine's
  * other repos: the link sits in an agent's reply, and nobody agreed yet to
- * tell Trail what else is on the laptop. The rest are offered one at a time
- * once connected (`addRepoLines`).
+ * tell Trail what else is on the laptop. The rest get their own link, one at
+ * a time, in the repo they're in (`linkLines`).
  */
 export function pickerRepos(repoKey: string | undefined, env: NodeJS.ProcessEnv = process.env): HandoffRepo[] {
   const r = repoKey ? knownRepos(env).find((k) => k.key === repoKey) : undefined;
@@ -356,33 +397,42 @@ export async function waitForConnect(opts: WaitOptions = {}): Promise<ClaimResul
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const started = now();
-  const st = readState(env);
-  const pending = livePending(st, started);
   const settled = (outcome: string) => track("brain_signup_settled", { outcome, mode: "nudge", duration_bucket: durationBucket(now() - started) }, {});
   const done = (patch: Partial<NudgeState> = {}) => writeState({ waitingSince: undefined, ...patch }, env);
+  // A link for a repo that's linked since has nothing left to wait for.
+  const live = (): Pending | null => {
+    const p = livePending(readState(env), now());
+    return p && !(p.repo && cloudForRepo(p.repo, env)) ? p : null;
+  };
   try {
-    if (!pending || readCloud(env)) {
+    let pending = live();
+    if (!pending) {
       done();
       return null;
     }
     // The Trail the link was made for, and only that one: nothing in the environment moves it.
-    const base = linkServer(pending, env);
-    const repos = pickerRepos(pending.repo, env);
-    const current = repos[0];
-    // No name either: whoever opens the link would see it before signing in.
-    const reg = await registerHandoff(
-      base,
-      { state: pending.state, repo: current ? { key: current.key, name: current.name } : null, repos, author: "" },
-      opts.fetchImpl,
-    );
-    if ("url" in reg) opts.onRegistered?.(reg.url);
+    const register = async (p: Pending): Promise<string> => {
+      const base = linkServer(p, env);
+      const repos = pickerRepos(p.repo, env);
+      const current = repos[0];
+      // No name either: whoever opens the link would see it before signing in.
+      const reg = await registerHandoff(
+        base,
+        { state: p.state, repo: current ? { key: current.key, name: current.name } : null, repos, author: "" },
+        opts.fetchImpl,
+      );
+      if ("url" in reg) opts.onRegistered?.(reg.url);
+      return base;
+    };
+    let base = await register(pending);
     for (;;) {
       const got = await claimHandoff(base, pending.state, opts.fetchImpl);
       if ("cloud" in got) {
         const cloud = { ...got.cloud, url: base, linkedAt: now() };
-        // Nothing from before signing in goes up: an older trail queued uses
-        // whether or not anyone had connected.
-        dropActivity(env);
+        // Nothing from before the first connection goes up: an older trail
+        // queued uses whether or not anyone had connected. A later link keeps
+        // what the workspaces already here have waiting.
+        if (!readClouds(env).length) dropActivity(env);
         writeCloud(cloud, env);
         const sent = await syncWorkspaceRepos(cloud, opts.fetchImpl);
         done({ pending: undefined, linked: { workspace: cloud.workspace.name, url: cloud.workspace.url, repos: sent.repos, learnings: sent.learnings } });
@@ -400,6 +450,16 @@ export async function waitForConnect(opts: WaitOptions = {}): Promise<ClaimResul
         return got;
       }
       await sleep(pollGap(now() - started));
+      // A newer link (offered in another repo) takes over this wait; the old one is left to expire.
+      const next = live();
+      if (!next) {
+        done();
+        return null;
+      }
+      if (next.state !== pending.state) {
+        pending = next;
+        base = await register(pending);
+      }
     }
   } catch {
     done();

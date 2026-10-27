@@ -2,10 +2,12 @@
  * The Trail workspace this machine is connected to, and the calls that talk
  * to it (trail-cloud's `/api/cli/…`).
  *
- * One connection per machine, not per repo: a person signs in once, through
- * the link their agent offers, and picks which of their repos the workspace
- * gets. It lives in `~/.trail/cloud.json` next to their notes, never in a
- * repo. Learnings themselves travel through git (`.trail/` is committed);
+ * One connection per workspace, and a laptop can hold several: a person signs
+ * in through the link their agent offers and picks the workspace a repo goes
+ * to, so a client's repo and the company's can go to different teams. Each
+ * repo goes to one workspace on this machine, the newest link that has it.
+ * The connections live in `~/.trail/cloud.json` next to their notes, never in
+ * a repo. Learnings themselves travel through git (`.trail/` is committed);
  * the workspace adds what one clone can't see: who is learning what across
  * the team's repos, how often a learning is reused, and the team page.
  *
@@ -110,11 +112,47 @@ function cloudPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(trailHome(env), "cloud.json");
 }
 
-/** The connection, or null when this machine hasn't connected a workspace. */
+/**
+ * What `cloud.json` holds: the newest connection at the top level, so an older
+ * trail still reads it as the machine's one connection (and keeps `others` when
+ * it writes that one back), and the rest under `others`.
+ */
+type StoredClouds = Cloud & { others?: unknown[] };
+
+/** A file edited by hand, or cut short, is no connection: every caller reads the address and the token. */
+function validCloud(c: unknown): c is Cloud {
+  const x = c as Cloud | null;
+  return !!x && typeof x === "object" && typeof x.token === "string" && !!x.token && typeof x.url === "string" && !!serverUrl(x.url) && !!x.workspace?.slug && Array.isArray(x.repos);
+}
+
+/** Every workspace this machine is connected to, the newest link first. */
+export function readClouds(env: NodeJS.ProcessEnv = process.env): Cloud[] {
+  const raw = readJson<StoredClouds>(cloudPath(env));
+  if (!raw || typeof raw !== "object") return [];
+  const { others, ...first } = raw;
+  const all = [first, ...(Array.isArray(others) ? others : [])].filter(validCloud);
+  return all.sort((a, b) => (b.linkedAt || 0) - (a.linkedAt || 0));
+}
+
+/** The newest connection, or null when this machine hasn't connected a workspace. For what isn't about one repo. */
 export function readCloud(env: NodeJS.ProcessEnv = process.env): Cloud | null {
-  const c = readJson<Cloud>(cloudPath(env));
-  // A file edited by hand, or cut short, is no connection: every caller reads the address and the token.
-  return c && typeof c.token === "string" && c.token && typeof c.url === "string" && serverUrl(c.url) && c.workspace?.slug ? c : null;
+  return readClouds(env)[0] ?? null;
+}
+
+/** The connection among `clouds` that a repo's learnings and uses go to: the newest whose workspace has it. */
+export function cloudIn(clouds: Cloud[], repoKey: string): Cloud | null {
+  return clouds.find((c) => c.repos.includes(repoKey)) ?? null;
+}
+
+/** The connection a repo's learnings and uses go to, or null when no workspace on this machine has it. */
+export function cloudForRepo(repoKey: string, env: NodeJS.ProcessEnv = process.env): Cloud | null {
+  return cloudIn(readClouds(env), repoKey);
+}
+
+/** Whether two connections are to the same workspace: by its id, which a new address for the same Trail keeps. */
+export function sameWorkspace(a: Cloud, b: Cloud): boolean {
+  if (a.workspace.id && b.workspace.id) return a.workspace.id === b.workspace.id;
+  return a.url === b.url && a.workspace.slug === b.workspace.slug;
 }
 
 /**
@@ -130,16 +168,29 @@ export function cloudEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 /** Owner-only: the file holds the workspace token. */
 export const SECRET_FILE_MODE = PRIVATE_FILE_MODE;
 
-/** Owner-only, in an owner-only folder: the file holds the workspace token. */
+/**
+ * Save one connection, in place of the one to the same workspace. Owner-only,
+ * in an owner-only folder: the file holds the workspace tokens.
+ */
 export function writeCloud(c: Cloud, env: NodeJS.ProcessEnv = process.env): void {
-  ensurePrivateDir(trailHome(env));
-  writeJsonAtomic(cloudPath(env), c, false, SECRET_FILE_MODE);
+  storeClouds([c, ...readClouds(env).filter((x) => !sameWorkspace(x, c))], env);
 }
 
-export function clearCloud(env: NodeJS.ProcessEnv = process.env): boolean {
+function storeClouds(list: Cloud[], env: NodeJS.ProcessEnv): void {
+  const [first, ...others] = [...list].sort((a, b) => (b.linkedAt || 0) - (a.linkedAt || 0));
+  ensurePrivateDir(trailHome(env));
+  writeJsonAtomic(cloudPath(env), others.length ? { ...first, others } : first, false, SECRET_FILE_MODE);
+}
+
+/** Forget every connection, or only the one to `workspace` (its slug). False when there was nothing to forget. */
+export function clearCloud(env: NodeJS.ProcessEnv = process.env, workspace?: string): boolean {
   const p = cloudPath(env);
   if (!existsSync(p)) return false;
-  rmSync(p, { force: true });
+  const all = readClouds(env);
+  const keep = workspace === undefined ? [] : all.filter((c) => c.workspace.slug !== workspace);
+  if (workspace !== undefined && keep.length === all.length) return false;
+  if (keep.length) storeClouds(keep, env);
+  else rmSync(p, { force: true });
   return true;
 }
 

@@ -136,7 +136,7 @@ export function notesForPrompt(ask: AskJson, s: SessionState, cap = PROMPT_NOTES
 export const TOUCH_NOTES_CAP = 2;
 
 /** What the agent just did to a file: opened it, or changed it. */
-export type Touch = { file: string; verb: 'opened' | 'changed' } | { command: string };
+export type Touch = { file: string; verb: 'opened' | 'changed' | 'editing' } | { command: string };
 
 /** Whether `command` names `file` as a path of its own, not as part of a longer one. */
 function commandNames(command: string, file: string): boolean {
@@ -172,7 +172,12 @@ export function notesOnTouch(notes: Note[], touch: Touch, s: SessionState, cap =
   if (!fresh.length) return null;
   s.injectedNotes = [...(s.injectedNotes ?? []), ...fresh.map((n) => n.path || n.title)].slice(-INJECTED_POINTERS_CAP);
   const hits: NoteHit[] = fresh.map((note) => ({ note, score: 0, shared: [] }));
-  const what = 'file' in touch ? `the file you just ${touch.verb}, ${touch.file}` : 'a file that command used';
+  const what =
+    'file' in touch
+      ? touch.verb === 'editing'
+        ? `the file you're about to change, ${touch.file}`
+        : `the file you just ${touch.verb}, ${touch.file}`
+      : 'a file that command used';
   const saved = learningSavingsLine(hits);
   const credit = learningCredit(hits);
   const one = fresh.length === 1;

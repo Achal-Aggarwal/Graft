@@ -22,7 +22,8 @@
  * Nothing here throws. A listing that can't be had is null; a call that
  * can't be made is an MCP error result the agent can read.
  */
-import { isLocalServer, readCloud, serverUrl, type Cloud } from '../cloud/workspace.js';
+import { cloudIn, isLocalServer, readClouds, serverUrl, type Cloud } from '../cloud/workspace.js';
+import { repoPlace } from '../notes/home.js';
 
 /**
  * The workspace's MCP server: `<trail>/mcp`, or null when the pairing has no
@@ -151,11 +152,23 @@ export class WorkspaceConnector {
   private failed: { at: number; err: unknown } | null = null;
 
   constructor(
-    private readonly opts: { env?: NodeJS.ProcessEnv; fetchImpl?: Fetch; timeoutMs?: number; callTimeoutMs?: number; version?: string } = {},
+    private readonly opts: { env?: NodeJS.ProcessEnv; fetchImpl?: Fetch; timeoutMs?: number; callTimeoutMs?: number; version?: string; cwd?: string } = {},
   ) {}
 
+  /** The repo this server runs in, by key: its workspace answers. Read once; the agent doesn't move repos. */
+  private repoKey: string | null | undefined;
+
+  /** The workspace of the repo the agent is in, or else the newest connection (a session outside any linked repo). */
   private cloud(): Cloud | null {
-    return readCloud(this.opts.env);
+    const all = readClouds(this.opts.env);
+    if (this.repoKey === undefined) {
+      try {
+        this.repoKey = repoPlace(this.opts.cwd ?? process.cwd(), this.opts.env).key;
+      } catch {
+        this.repoKey = null;
+      }
+    }
+    return (this.repoKey ? cloudIn(all, this.repoKey) : null) ?? all[0] ?? null;
   }
 
   /** Whether this machine is paired with a workspace, so its tools are asked for. */

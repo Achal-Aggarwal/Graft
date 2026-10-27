@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { readJson, writeJsonAtomic } from "../util/state.js";
 import { trailOnPath } from "../brand.js";
 import { repoPlace } from "../notes/home.js";
-import { readCloud, serverUrl, trailUrl, type Cloud } from "./workspace.js";
+import { readClouds, serverUrl, trailUrl, type Cloud } from "./workspace.js";
 
 export interface TeamFile {
   /** The Trail the workspace is on. */
@@ -73,12 +73,12 @@ export function teamLine(name: string, slug: string, installed = trailOnPath()):
   return `This repo's team uses Trail: their workspace ${name} has the team's brand, skills and learnings, and this laptop isn't signed in to it. Once, at the end of your first reply, or when the user asks for something those would help with (a deck, a doc in the team's voice), run \`${login}\` and give the user the link it prints. One click in their browser signs this laptop in; then the workspace's tools show up here.`;
 }
 
-/** The same line for a Claude Code session in `dir`: only when this laptop isn't signed in. Never throws. */
+/** The same line for a Claude Code session in `dir`: only when this laptop isn't signed in to that team's workspace. Never throws. */
 export function teamSignInLine(dir: string, env: NodeJS.ProcessEnv = process.env): string {
   try {
-    if (readCloud(env)) return "";
     const team = teamWorkspace(repoPlace(dir, env).checkout, env);
-    return team ? teamLine(team.name, team.workspace) : "";
+    if (!team || readClouds(env).some((c) => c.workspace.slug === team.workspace)) return "";
+    return teamLine(team.name, team.workspace);
   } catch {
     return "";
   }

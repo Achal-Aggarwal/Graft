@@ -122,7 +122,7 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
 
   // The workspace's own MCP server, when this machine is paired with one:
   // started now, so its instructions are in hand by the time the client asks.
-  const workspace = new WorkspaceConnector({ version });
+  const workspace = new WorkspaceConnector({ version, cwd: root });
   // One wait for the workspace, from boot: initialize and the first lists share it, and once it has
   // passed they answer at once with what they have, and `list_changed` brings the rest.
   const deadline = Date.now() + WORKSPACE_WAIT_MS;

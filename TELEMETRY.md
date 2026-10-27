@@ -69,7 +69,7 @@ The events:
 | `skill_stale` | `reason` (`failed`/`corrected`/`missing`/`unused`/`unfollowed`) | A skill stops reaching the agent as it is: it failed or was corrected twice in a row, something a step needs is gone, it went unused, or the agent mostly didn't follow it |
 | `guardrail` | `class` (`no-timeout`/`prod-after-beta`), `outcome` (`hint`/`ask`/`deny`/`sure-fail`/`avoided`) | A built-in guardrail fires, or the fixed command then works (`avoided`). The command is never sent |
 | `wall_hit` | `class` (`timeout-missing`/`zsh-no-match`/`git-https-auth`/`docker-rootless`/`npm-e401-eotp`/`claude-not-logged-in`/`enospc`), `had_lesson` (`true`/`false`) | A failing command matches a known wall, and whether you had kept a lesson for it. The command and its output are never sent |
-| `hook_ms` | `event` (`session-start`/`prompt`/`pre-bash`/`tool-savings`/`post-bash`/`post-bash-fail`/`post-edit`/`post-edit-sync`/`stop`), `bucket` (`<50ms`/`50-100ms`/`100-300ms`/`300ms-1s`/`1-3s`/`3s+`) | A Claude Code hook finishes: which one, and how long it took, bucketed |
+| `hook_ms` | `event` (`session-start`/`prompt`/`pre-bash`/`pre-edit`/`tool-savings`/`post-bash`/`post-bash-fail`/`post-edit`/`post-edit-sync`/`stop`), `bucket` (`<50ms`/`50-100ms`/`100-300ms`/`300ms-1s`/`1-3s`/`3s+`) | A Claude Code hook finishes: which one, and how long it took, bucketed |
 
 Two rules govern every value above, and both are enforced in code rather than by
 review:

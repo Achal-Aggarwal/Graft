@@ -4,7 +4,7 @@
  * reply with, at most once a session and in wording that changes from one
  * session to the next. A background wait registers the link with Trail, picks
  * up the sign-in, uploads the picked repos' learnings, and the next command
- * says so once. Connected, a repo outside the workspace gets one question.
+ * says so once. Signed in, a repo no workspace here has gets the link to pick one.
  * All of it is off unless TRAIL_CLOUD=1, or the machine is already connected.
  */
 import { test } from "node:test";
@@ -266,16 +266,31 @@ function connect(repos: string[]): void {
   writeCloud(c);
 }
 
-test("connected: a repo with learnings outside the workspace gets one question, ever", () => {
+test("signed in: a repo no workspace here has gets the link to pick one, once a session", () => {
   freshHome();
   const inside = repo();
   const outside = repo();
   connect([inside.key]);
-  assert.deepEqual(lines(inside.dir, "ask", "s1"), [], "nothing to say about a repo already in it");
-  const asked = lines(outside.dir, "ask", "s1");
-  assert.equal(asked.length, 1);
-  assert.match(asked[0]!, /^\[trail\] Ask the user once, at the end of your reply: add acme\/extract-\d+ to their Trail workspace Acme/);
-  assert.match(asked[0]!, /run `trail workspace add`/);
-  assert.deepEqual(lines(outside.dir, "ask", "s2"), [], "never again");
+  assert.deepEqual(lines(inside.dir, "ask", "s1"), [], "nothing to say about a repo already in one");
+  const offered = lines(outside.dir, "ask", "s1");
+  assert.equal(offered.length, 2);
+  assert.match(offered[0]!, /^\[trail\] End your reply with this line, word for word: \[Pick a Trail workspace for acme\/extract-\d+\]\(http:\/\/trail\.test\/connect\?state=/);
+  assert.match(offered[1]!, /one of the user's workspaces, a teammate's, or a new one/);
+  assert.equal(stateOf().pending && (stateOf().pending as { repo?: string }).repo, outside.key, "the link is for this repo");
+  assert.deepEqual(lines(outside.dir, "ask", "s1"), [], "once a session");
+  assert.equal(lines(outside.dir, "ask", "s2").length, 2, "and again the next one");
   rmSync(join(process.env.TRAIL_HOME!, "cloud.json"));
+});
+
+test("a link made in one repo isn't offered in another: each repo gets its own", () => {
+  freshHome();
+  const a = repo();
+  const b = repo();
+  lines(a.dir, "ask", "s1");
+  const first = stateOf().pending as { state: string; repo?: string };
+  assert.equal(first.repo, a.key);
+  lines(b.dir, "ask", "s2");
+  const second = stateOf().pending as { state: string; repo?: string };
+  assert.equal(second.repo, b.key);
+  assert.notEqual(second.state, first.state);
 });
